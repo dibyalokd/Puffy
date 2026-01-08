@@ -1,0 +1,58 @@
+import chromadb
+
+# --- Your Existing Functions (Placeholders) ---
+def my_local_embed_api(text):
+    # Your existing code that returns a list of floats
+    # Example: return [0.1, 0.2, 0.3...]
+    pass
+
+def my_local_llm_api(prompt):
+    # Your existing code that returns a string
+    # Example: return "Plants use sunlight..."
+    pass
+
+# --- ChromaDB Logic ---
+
+# Initialize Client
+client = chromadb.PersistentClient(path="./local_storage")
+
+# Create collection without a default embedding function
+# (We set it to None because we are providing embeddings manually)
+collection = client.get_or_create_collection(name="topic_vault")
+
+def store_topic(topic, description):
+    # 1. Manually get the embedding from your function
+    vector = my_local_embed_api(description)
+    
+    # 2. Store in Chroma
+    collection.add(
+        ids=[topic.lower().replace(" ", "_")],
+        embeddings=[vector],
+        documents=[description],
+        metadatas=[{"topic_name": topic}]
+    )
+    print(f"Stored {topic} successfully.")
+
+def query_topic(user_query):
+    # 1. Get embedding for the query
+    query_vector = my_local_embed_api(user_query)
+    
+    # 2. Query Chroma using the vector
+    results = collection.query(
+        query_embeddings=[query_vector],
+        n_results=1
+    )
+    
+    # Extract the retrieved description
+    if results['documents']:
+        context = results['documents'][0][0]
+        
+        # 3. Use your LLM function to format the final answer
+        prompt = f"Using this context: {context}, answer the following: {user_query}"
+        return my_local_llm_api(prompt)
+    
+    return "No relevant information found."
+
+# --- Usage Flow ---
+# store_topic("Cloud Computing", "On-demand availability of computer system resources...")
+# print(query_topic("What is cloud computing?"))
