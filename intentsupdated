@@ -1,0 +1,65 @@
+import chromadb
+import json
+
+# --- Your Existing Functions ---
+def my_local_embed_api(text):
+    # Returns list of floats from your local model
+    pass
+
+def my_local_llm_api(prompt):
+    # Returns string from your local LLM
+    pass
+
+# --- ChromaDB Setup ---
+client = chromadb.PersistentClient(path="./local_storage")
+collection = client.get_or_create_collection(name="topic_vault")
+
+def store_or_update(topic, description):
+    """Adds or overwrites a topic based on name."""
+    vector = my_local_embed_api(description)
+    topic_id = topic.lower().replace(" ", "_")
+    
+    collection.upsert(
+        ids=[topic_id],
+        embeddings=[vector],
+        documents=[description],
+        metadatas={"topic_name": topic}
+    )
+    return f"✅ Topic '{topic}' has been saved/updated."
+
+def search_and_format(query):
+    """Retrieves context and uses local LLM to format the final answer."""
+    query_vector = my_local_embed_api(query)
+    results = collection.query(query_embeddings=[query_vector], n_results=1)
+    
+    if results['documents'] and len(results['documents'][0]) > 0:
+        context = results['documents'][0][0]
+        # Your local LLM only handles the "readability" part here
+        prompt = f"Using this info: {context}. Answer this: {query}. Make it sound natural."
+        return my_local_llm_api(prompt)
+    
+    return "❌ No information found for that query."
+
+# --- Simple Manual Routing ---
+print("Commands: 'add: Topic | Description' or 'query: Question'")
+
+while True:
+    user_input = input("\n> ")
+    if user_input.lower() in ['exit', 'quit']: break
+
+    if ":" in user_input:
+        command, content = user_input.split(":", 1)
+        command = command.strip().lower()
+
+        if command in ["add", "update"]:
+            # Expecting "add: Topic Name | The description here"
+            if "|" in content:
+                t_name, t_desc = content.split("|", 1)
+                print(store_or_update(t_name.strip(), t_desc.strip()))
+            else:
+                print("Error: Use '|' to separate topic name and description.")
+        
+        elif command == "query":
+            print(f"\nAI: {search_and_format(content.strip())}")
+    else:
+        print("Invalid format. Use 'add: Topic | Desc' or 'query: Question'")
