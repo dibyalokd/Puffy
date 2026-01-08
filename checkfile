@@ -1,0 +1,65 @@
+import chromadb
+import requests
+import json
+from chromadb.api.types import Documents, Embeddings, EmbeddingFunction
+
+# 1. Define Custom API Embedding Function
+class LocalAPIEmbeddingFunction(EmbeddingFunction):
+    def __init__(self, model_name="nomic-embed-text", url="http://localhost:11434/api/embeddings"):
+        self.model_name = model_name
+        self.url = url
+
+    def __call__(self, input: Documents) -> Embeddings:
+        # Simple API call to your local embedding model
+        embeddings = []
+        for text in input:
+            response = requests.post(
+                self.url,
+                json={"model": self.model_name, "prompt": text}
+            )
+            # Adjust the key ['embedding'] based on your specific API provider's response format
+            embeddings.append(response.json()["embedding"])
+        return embeddings
+
+# 2. Initialize ChromaDB
+client = chromadb.PersistentClient(path="./local_topic_db")
+custom_ef = LocalAPIEmbeddingFunction()
+
+collection = client.get_or_create_collection(
+    name="topics_collection", 
+    embedding_function=custom_ef
+)
+
+# 3. Utility functions for Topic Storage and NLP Query
+def save_topic(topic, description):
+    collection.add(
+        documents=[description],
+        metadatas=[{"topic_name": topic}],
+        ids=[topic.lower().replace(" ", "_")]
+    )
+    print(f"Success: Stored '{topic}'")
+
+def ask_local_llm(query):
+    # Retrieve relevant description from Chroma
+    results = collection.query(query_texts=[query], n_results=1)
+    context = results['documents'][0][0] if results['documents'] else "No context found."
+
+    # Call Local LLM API for human-readable formatting
+    prompt = f"Context: {context}\n\nQuestion: {query}\n\nAnswer the question using the context in a friendly, readable way:"
+    
+    llm_response = requests.post(
+        "http://localhost:11434/api/generate",
+        json={
+            "model": "llama3", # or your local model name
+            "prompt": prompt,
+            "stream": False
+        }
+    )
+    return llm_response.json().get("response")
+
+# --- Practical Usage ---
+save_topic("Photosynthesis", "Plants convert light energy into chemical energy using chlorophyll.")
+save_topic("Black Holes", "Regions of spacetime where gravity is so strong that nothing, not even light, can escape.")
+
+print("\n--- Final Output ---")
+print(ask_local_llm("Tell me about how plants get energy?"))
