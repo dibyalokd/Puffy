@@ -1,0 +1,66 @@
+import chromadb
+
+# --- Your Existing Functions ---
+def my_local_embed_api(text):
+    # Returns list of floats from your local model
+    pass
+
+def my_local_llm_api(prompt):
+    # Returns string from your local LLM
+    pass
+
+# --- ChromaDB Setup ---
+client = chromadb.PersistentClient(path="./local_storage")
+collection = client.get_or_create_collection(name="topic_vault")
+
+def store_or_update_topic(topic, description):
+    """
+    Handles both initial storage and updates.
+    If the ID (topic_id) already exists, it replaces the old data.
+    """
+    topic_id = topic.lower().replace(" ", "_")
+    
+    # Generate new embedding for the new description
+    vector = my_local_embed_api(description)
+    
+    # .upsert replaces existing data if the ID matches
+    collection.upsert(
+        ids=[topic_id],
+        embeddings=[vector],
+        documents=[description],
+        metadatas=[{"topic_name": topic}]
+    )
+    print(f"Successfully updated/stored: {topic}")
+
+def delete_topic(topic):
+    """Explicitly removes a topic from the database."""
+    topic_id = topic.lower().replace(" ", "_")
+    collection.delete(ids=[topic_id])
+    print(f"Deleted: {topic}")
+
+def query_topic(user_query):
+    query_vector = my_local_embed_api(user_query)
+    
+    results = collection.query(
+        query_embeddings=[query_vector],
+        n_results=1
+    )
+    
+    if results['documents'] and len(results['documents'][0]) > 0:
+        context = results['documents'][0][0]
+        prompt = f"Context: {context}\n\nUser Question: {user_query}\n\nFormat this beautifully:"
+        return my_local_llm_api(prompt)
+    
+    return "I couldn't find any information on that topic in my database."
+
+# --- Example Workflow ---
+
+# 1. Initial Storage
+store_or_update_topic("Photosynthesis", "Plants eat sunlight to grow.")
+
+# 2. Update same topic with more accurate info
+# This automatically replaces the "eating sunlight" description
+store_or_update_topic("Photosynthesis", "A process used by plants to convert light energy into chemical energy.")
+
+# 3. Query the updated info
+print(query_topic("Explain photosynthesis"))
