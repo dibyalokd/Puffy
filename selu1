@@ -19,3 +19,31 @@ page_elements = load_locators('locators.txt')
 
 # 2. Use them in your Selenium script
 # Example: driver.find_element("xpath", page_elements['Login_user_button']).click()
+
+
+------
+
+import os
+
+# 1. Get the directory where THIS script is located
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 2. Join it with your filename to get the full absolute path
+file_path = os.path.join(script_dir, "locators.txt")
+
+def load_locators(path):
+    locators = {}
+    # Use a try-except block to catch path issues early
+    try:
+        with open(path, 'r', encoding='utf-8') as file:
+            for line in file:
+                if "->" in line:
+                    name, xpath = line.split("->", 1)
+                    locators[name.strip()] = xpath.strip().strip('"').strip('”')
+        return locators
+    except FileNotFoundError:
+        print(f"Error: Could not find the file at {path}")
+        return {}
+
+# Load them up
+page_elements = load_locators(file_path)
