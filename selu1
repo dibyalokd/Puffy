@@ -1,0 +1,21 @@
+def load_locators(file_path):
+    locators = {}
+    with open(file_path, 'r') as file:
+        for line in file:
+            # Skip empty lines or lines without the delimiter
+            if "->" in line:
+                # Split the line into name and xpath
+                name, xpath = line.split("->")
+                
+                # Clean up whitespace and remove quotes
+                clean_name = name.strip()
+                clean_xpath = xpath.strip().strip('"').strip('”')
+                
+                locators[clean_name] = clean_xpath
+    return locators
+
+# 1. Load the file
+page_elements = load_locators('locators.txt')
+
+# 2. Use them in your Selenium script
+# Example: driver.find_element("xpath", page_elements['Login_user_button']).click()
