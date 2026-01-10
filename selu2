@@ -1,0 +1,18 @@
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+
+xpath_query = "//button[@id='submit']"
+
+try:
+    # 1. Wait until the element is both present AND clickable
+    element = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable((By.XPATH, xpath_query))
+    )
+    # 2. Interact with it
+    element.click()
+    print("Element is interactable and clicked!")
+
+except TimeoutException:
+    print("Element was not found or not interactable within 10 seconds.")
