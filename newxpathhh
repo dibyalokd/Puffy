@@ -1,0 +1,41 @@
+import re
+import os
+
+def load_pom_locators(file_path):
+    locators = {}
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+
+        # 1. Strip Block Comments /* ... */
+        content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+
+        # 2. Strip Single Line Comments // ...
+        # We use a positive lookahead to make sure we don't strip // inside quotes
+        # But a simpler way for POM files is to strip any line starting with //
+        content = "\n".join([line for line in content.splitlines() if not line.strip().startswith("//")])
+
+        # 3. The "Super Regex"
+        # This looks for:
+        # xpath\s*=\s* -> 'xpath' followed by '='
+        # ["'“](.*?)["'”]   -> Any quote type, then the value, then any quote type
+        # .*?               -> Anything in between (newlines/spaces/static)
+        # WebElement\s+(\w+) -> The word 'WebElement' followed by the variable name
+        pattern = r'xpath\s*=\s*["\'“](.*?)["\'”].*?WebElement\s+(\w+)'
+        
+        matches = re.finditer(pattern, content, flags=re.DOTALL | re.IGNORECASE)
+        
+        for match in matches:
+            xpath_value = match.group(1).strip()
+            variable_name = match.group(2).strip()
+            locators[variable_name] = xpath_value
+            
+        return locators
+
+    except Exception as e:
+        print(f"Error reading file: {e}")
+        return {}
+
+# Usage
+# page_elements = load_pom_locators("YourPageFile.java")
