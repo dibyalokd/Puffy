@@ -1,0 +1,42 @@
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+
+# 1. Your existing dictionary
+elements_dict = {
+    "username_field": "//input[@id='user']",
+    "password_field": "//input[@name='pass']",
+    "login_btn": "//button[@type='submit']"
+}
+
+def run_flow_from_file(file_path, driver):
+    with open(file_path, 'r') as file:
+        for line in file:
+            # Clean up line and skip empty lines or comments
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            
+            # Split line by a delimiter (using '|' here for clarity)
+            parts = [p.strip() for p in line.split("|")]
+            obj_name = parts[0]
+            action = parts[1].lower()
+            value = parts[2] if len(parts) > 2 else None
+
+            # 2. The Lookup & Execution logic
+            if obj_name in elements_dict:
+                xpath = elements_dict[obj_name]
+                element = driver.find_element(By.XPATH, xpath)
+                
+                # 3. Action Mapping
+                if action == "click":
+                    element.click()
+                elif action == "type" and value:
+                    element.send_keys(value)
+                elif action == "clear":
+                    element.clear()
+            else:
+                print(f"Warning: {obj_name} not found in dictionary.")
+
+# Example Usage:
+# driver = webdriver.Chrome()
+# run_flow_from_file('my_steps.txt', driver)
