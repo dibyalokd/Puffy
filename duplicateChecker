@@ -1,5 +1,117 @@
 import org.apache.poi.ss.usermodel.*;
 import java.io.File;
+import java.io.PrintWriter;
+import java.util.*;
+
+public class ExcelDuplicateTracker {
+
+    public static void main(String[] args) {
+        // 1. Setup paths
+        String directoryPath = "path/to/your/excel/files"; 
+        String reportName = "duplicate_report.txt";
+        
+        File folder = new File(directoryPath);
+        Map<String, List<String>> caseMap = new HashMap<>();
+
+        File[] files = folder.listFiles((dir, name) -> 
+            name.toLowerCase().endsWith(".xlsx") || name.toLowerCase().endsWith(".xls"));
+
+        if (files == null || files.length == 0) {
+            System.out.println("No excel files found in the directory.");
+            return;
+        }
+
+        System.out.println("Scanning " + files.length + " files... Please wait.");
+
+        // 2. Process Files
+        for (File file : files) {
+            try (Workbook workbook = WorkbookFactory.create(file)) {
+                for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
+                    processSheet(workbook.getSheetAt(i), file.getName(), caseMap);
+                }
+            } catch (Exception e) {
+                System.err.println("Could not read file " + file.getName() + ": " + e.getMessage());
+            }
+        }
+
+        // 3. Write to Text File
+        saveReportToFile(caseMap, reportName);
+    }
+
+    private static void processSheet(Sheet sheet, String fileName, Map<String, List<String>> caseMap) {
+        Row headerRow = sheet.getRow(0);
+        if (headerRow == null) return;
+
+        int caseIdColIndex = -1;
+        for (Cell cell : headerRow) {
+            if ("caseId".equalsIgnoreCase(getCellValue(cell))) {
+                caseIdColIndex = cell.getColumnIndex();
+                break;
+            }
+        }
+
+        if (caseIdColIndex == -1) return;
+
+        for (int r = 1; r <= sheet.getLastRowNum(); r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) continue;
+            
+            Cell cell = row.getCell(caseIdColIndex);
+            String val = getCellValue(cell).trim();
+            
+            if (!val.isEmpty()) {
+                String location = fileName + " -> Sheet: " + sheet.getSheetName();
+                caseMap.computeIfAbsent(val, k -> new ArrayList<>()).add(location);
+            }
+        }
+    }
+
+    private static void saveReportToFile(Map<String, List<String>> caseMap, String reportName) {
+        try (PrintWriter writer = new PrintWriter(reportName)) {
+            writer.println("==============================================");
+            writer.println("DUPLICATE CASE ID REPORT");
+            writer.println("Generated on: " + new Date());
+            writer.println("==============================================\n");
+
+            long duplicateCount = caseMap.values().stream().filter(l -> l.size() > 1).count();
+
+            if (duplicateCount == 0) {
+                writer.println("No duplicate caseIds found across the directory.");
+            } else {
+                caseMap.forEach((caseId, locations) -> {
+                    if (locations.size() > 1) {
+                        writer.println("ID: " + caseId);
+                        for (String loc : locations) {
+                            writer.println("   [Location] " + loc);
+                        }
+                        writer.println(); 
+                    }
+                });
+            }
+            
+            System.out.println("Success! Found " + duplicateCount + " duplicate IDs.");
+            System.out.println("Full report saved to: " + new File(reportName).getAbsolutePath());
+
+        } catch (Exception e) {
+            System.err.println("Error writing to file: " + e.getMessage());
+        }
+    }
+
+    // Helper to handle different cell types (String vs Numeric)
+    private static String getCellValue(Cell cell) {
+        if (cell == null) return "";
+        switch (cell.getCellType()) {
+            case STRING: return cell.getStringCellValue();
+            case NUMERIC: return String.valueOf((long)cell.getNumericCellValue());
+            default: return "";
+        }
+    }
+}
+
+-------------------------------------
+
+import org.apache.poi.ss.usermodel.*;
+import java.io.File;
 import java.util.*;
 
 public class ExcelDuplicateTracker {
