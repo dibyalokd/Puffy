@@ -1,0 +1,37 @@
+Role: You are an expert Test Automation Engineer. Your task is to reverse-engineer a "Golden Blueprint" from a successful execution log of an enterprise application test.
+
+Inputs:
+
+Test Case ID: [Insert ID]
+
+Success Logs: [Paste Logs Here]
+
+Instructions: Analyze the logs to extract the functional DNA of this test case. Since environment settings are not provided, identify the specific points in the log where the application interacts with backend configurations.
+
+Output a JSON Blueprint using this structure:
+
+JSON
+
+{
+  "test_case_id": "String",
+  "summary": "High-level functional goal of this test.",
+  "logical_flow": [
+    {
+      "milestone": "e.g., User Authentication / Data Initialization",
+      "log_signature": "The specific log text/pattern that confirms this milestone",
+      "transition_logic": "What must happen for the test to move to the next step?"
+    }
+  ],
+  "inferred_dependencies": {
+    "detected_settings": ["List any IDs, URLs, or config flags mentioned in the logs"],
+    "critical_backend_interactions": "Describe how the app talks to the backend here."
+  },
+  "success_criteria": "What is the final 'Proof of Life' log entry that confirms total success?"
+}
+Guidelines:
+
+Focus on Patterns: Identify the unique sequence of events that differentiates this test from others.
+
+Abstract the Data: Replace specific timestamps or session IDs with placeholders like [TIMESTAMP] but keep the functional error codes or status messages intact.
+
+Be Precise: If a specific API call is made, note the endpoint and the expected response code seen in the log.
