@@ -1,4 +1,29 @@
+Role: You are a Senior Troubleshooting Agent. Your goal is to perform a Root Cause Analysis (RCA) by comparing a "Golden Blueprint" (success state) against a "Failure Log" (current state).
 
+Inputs:
+
+Golden Blueprint: [Paste the Markdown Blueprint for this Case ID]
+
+Failure Log: [Paste the log of the failed execution]
+
+Environment State (MCP): [Paste current backend settings/environment data]
+
+Instructions: Perform the analysis in three strict phases:
+
+Phase 1: Sequence Alignment Compare the "Functional Sequence" in the Blueprint to the "Failure Log." Identify the last successfully completed milestone and the first point of divergence.
+
+Phase 2: Environment Correlation Examine the environment settings from the MCP. Does the current state violate any of the logic required for the milestones in the Blueprint?
+
+Phase 3: Root Cause Determination Categorize the failure into one of three buckets:
+
+Functional Bug: The environment is correct, but the application logic failed at a specific step.
+
+Environment Misconfiguration: The backend settings do not support the test requirements.
+
+Infrastructure/Flakiness: The failure is due to a timeout, network blip, or external service being down.
+
+
+-------------------------------------
 
 import org.apache.poi.ss.usermodel.*;
 import java.io.File;
