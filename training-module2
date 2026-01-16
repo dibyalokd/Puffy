@@ -1,0 +1,16 @@
+Moving to the engine room—here is the two-line breakdown for Module 2.
+Module 2: Generative AI & LLMs
+ * The Core Tech: Large Language Models (LLMs) Explained
+   LLMs are massive AI systems trained on trillions of words to understand, summarize, and generate human-like text at scale.
+ * The Process: Tokens, Context Windows, and "Super-powered Autocomplete"
+   AI breaks text into "tokens" (chunks of characters) and predicts the next most likely token to build sentences, much like a highly advanced autocomplete.
+ * Model Landscape: Text (GPT/Gemini), Image (Midjourney), and Video
+   Generative AI isn't just for chat; different specialized models can now create high-quality art, realistic videos, and even original music from simple prompts.
+ * Technical Flaws: Hallucinations and Factual Errors
+   Because AI predicts the next word based on probability rather than facts, it can sometimes confidently invent "fake news" or non-existent citations.
+Next Step:
+Would you like me to continue with the 2-line breakdown for Module 3: Mastery of Prompt Engineering, or should we dive deeper into one of these specific topics?
+How LLMs work for beginners
+This video is relevant because it provides a visual breakdown of the different types of generative AI models, making the "Model Landscape" section easier to visualize for your team.
+
+YouTube video views will be stored in your YouTube History, and your data will be stored and used by YouTube according to its Terms of Service
