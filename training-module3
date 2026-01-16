@@ -1,0 +1,16 @@
+This is the "make or break" module for your team. It’s where they move from being casual users to power users.
+Module 3: Mastery of Prompt Engineering
+ * Prompt Frameworks: Role, Context, Task, and Constraints
+   Give the AI a persona (Role), background info (Context), a clear goal (Task), and boundaries like word count or tone (Constraints).
+ * Techniques: Zero-shot, Few-shot, and Chain-of-Thought Prompting
+   Learn to ask directly (Zero-shot), provide examples (Few-shot), or ask the AI to "think step-by-step" (Chain-of-Thought) for complex logic.
+ * Iterative Design: Refining Outputs Through Multi-turn Conversation
+   Treat the AI like an intern; if the first result is off, don't restart—give feedback and ask for specific adjustments until it's perfect.
+ * Workplace Automation: Summarization, Drafting, and Data Formatting
+   Apply these techniques to turn messy meeting transcripts into clean action items, draft personalized emails, or convert text into professional tables.
+Next Step:
+Would you like the 2-line breakdown for Module 4: Practical Workplace Workflows to see how this fits into their daily calendar?
+Zero-Shot vs. Few-Shot Prompting Explained
+This video is helpful because it visually demonstrates how adding just one or two examples (Few-shot) can drastically improve the quality of the AI's response compared to asking a blind question.
+
+YouTube video views will be stored in your YouTube History, and your data will be stored and used by YouTube according to its Terms of Service
