@@ -1,0 +1,11 @@
+This final module is perhaps the most critical for protecting the organization. It ensures that while the team becomes more productive, they don't inadvertently create legal or security risks.
+Module 5: Ethics, Safety & Policy
+ * Data Privacy: Handling Sensitive Company and Client Information
+   Never input proprietary code, financial records, or private client data into public AI tools, as this information can potentially be used to train future models.
+ * Bias & Fairness: Identifying Prejudices in AI Results
+   AI can mirror historical biases found in its training data; always audit outputs for unfair stereotypes or exclusionary language before publishing.
+ * Copyright & Legal: Ownership of AI-Generated Content
+   Purely AI-generated work often cannot be copyrighted; legal protection usually requires "significant human authorship" through original editing and refinement.
+ * Company Policy: Guidelines for Responsible Internal Use
+   Follow the official "AI Rulebook" regarding which tools are approved for work, how to disclose AI use, and the mandatory human-in-the-loop review process.
+You're all set! You now have a complete, 5-module foundational course structure. To help you launch this with your team, would you like me to draft a 1-page "AI Code of Conduct" memo that summarizes these safety points for them to sign?
