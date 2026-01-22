@@ -1,0 +1,290 @@
+import requests
+import json
+import base64
+import os
+from typing import Optional, Dict
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+class BitbucketPRUploader:
+    """Upload files to Bitbucket and create Pull Requests via API with SSO token auth"""
+    
+    def __init__(self, workspace: str, repo_slug: str, username: str, app_password: str, 
+                 proxies: Optional[Dict[str, str]] = None):
+        """
+        Initialize Bitbucket API client
+        
+        Args:
+            workspace: Bitbucket workspace name
+            repo_slug: Repository slug/name
+            username: Bitbucket username/email
+            app_password: App password or personal access token
+            proxies: Dict with 'http' and 'https' proxy URLs
+        """
+        self.workspace = workspace
+        self.repo_slug = repo_slug
+        self.base_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}"
+        self.auth = (username, app_password)
+        self.proxies = proxies or {}
+        self.session = self._create_session()
+        
+    def _create_session(self) -> requests.Session:
+        """Create a requests session with auth and proxy config"""
+        session = requests.Session()
+        session.auth = self.auth
+        session.proxies.update(self.proxies)
+        # Handle corporate SSL certificates if needed
+        session.verify = True  # Set to False or path to cert bundle if needed
+        return session
+    
+    def create_branch(self, branch_name: str, source_branch: str = "master") -> bool:
+        """
+        Create a new branch from source branch
+        
+        Args:
+            branch_name: Name for the new branch
+            source_branch: Branch to create from (default: master)
+        """
+        try:
+            # First, get the latest commit hash from source branch
+            url = f"{self.base_url}/refs/branches/{source_branch}"
+            response = self.session.get(url)
+            response.raise_for_status()
+            
+            source_hash = response.json()['target']['hash']
+            
+            # Create new branch
+            url = f"{self.base_url}/refs/branches"
+            data = {
+                "name": branch_name,
+                "target": {
+                    "hash": source_hash
+                }
+            }
+            response = self.session.post(url, json=data)
+            response.raise_for_status()
+            logger.info(f"Branch '{branch_name}' created successfully")
+            return True
+            
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 409:
+                logger.warning(f"Branch '{branch_name}' already exists")
+                return True
+            logger.error(f"Failed to create branch: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error creating branch: {e}")
+            return False
+    
+    def upload_file(self, file_path: str, repo_path: str, branch: str, 
+                   commit_message: str) -> bool:
+        """
+        Upload a file to repository on specified branch
+        
+        Args:
+            file_path: Local path to file
+            repo_path: Destination path in repository
+            branch: Branch to commit to
+            commit_message: Commit message
+        """
+        try:
+            # Read file content
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+            
+            # Bitbucket API endpoint for file upload
+            url = f"{self.base_url}/src"
+            
+            # Prepare multipart form data
+            files = {
+                repo_path: file_content
+            }
+            
+            data = {
+                'message': commit_message,
+                'branch': branch
+            }
+            
+            response = self.session.post(url, files=files, data=data)
+            response.raise_for_status()
+            
+            logger.info(f"File '{file_path}' uploaded to '{repo_path}' on branch '{branch}'")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to upload file: {e}")
+            return False
+    
+    def create_pull_request(self, title: str, source_branch: str, 
+                          destination_branch: str = "master",
+                          description: str = "", 
+                          reviewers: Optional[list] = None,
+                          close_source_branch: bool = True) -> Optional[int]:
+        """
+        Create a pull request
+        
+        Args:
+            title: PR title
+            source_branch: Branch with changes
+            destination_branch: Target branch (default: master)
+            description: PR description
+            reviewers: List of reviewer usernames
+            close_source_branch: Auto-close source branch on merge
+            
+        Returns:
+            PR ID if successful, None otherwise
+        """
+        try:
+            url = f"{self.base_url}/pullrequests"
+            
+            payload = {
+                "title": title,
+                "source": {
+                    "branch": {
+                        "name": source_branch
+                    }
+                },
+                "destination": {
+                    "branch": {
+                        "name": destination_branch
+                    }
+                },
+                "description": description,
+                "close_source_branch": close_source_branch
+            }
+            
+            # Add reviewers if provided
+            if reviewers:
+                payload["reviewers"] = [{"uuid": f"{{{uuid}}}"} for uuid in reviewers]
+            
+            response = self.session.post(url, json=payload)
+            response.raise_for_status()
+            
+            pr_data = response.json()
+            pr_id = pr_data['id']
+            pr_url = pr_data['links']['html']['href']
+            
+            logger.info(f"Pull request created successfully!")
+            logger.info(f"PR ID: {pr_id}")
+            logger.info(f"PR URL: {pr_url}")
+            
+            return pr_id
+            
+        except Exception as e:
+            logger.error(f"Failed to create pull request: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response: {e.response.text}")
+            return None
+    
+    def upload_and_create_pr(self, file_path: str, repo_path: str, 
+                            branch_name: str, pr_title: str,
+                            commit_message: str, pr_description: str = "",
+                            source_branch: str = "master",
+                            destination_branch: str = "master",
+                            reviewers: Optional[list] = None) -> Optional[int]:
+        """
+        Complete workflow: create branch, upload file, and create PR
+        
+        Args:
+            file_path: Local file to upload
+            repo_path: Destination path in repo
+            branch_name: Name for feature branch
+            pr_title: Pull request title
+            commit_message: Commit message
+            pr_description: PR description
+            source_branch: Branch to create from
+            destination_branch: Target branch for PR
+            reviewers: List of reviewer UUIDs
+            
+        Returns:
+            PR ID if successful, None otherwise
+        """
+        logger.info("Starting complete PR workflow...")
+        
+        # Step 1: Create branch
+        if not self.create_branch(branch_name, source_branch):
+            return None
+        
+        # Step 2: Upload file
+        if not self.upload_file(file_path, repo_path, branch_name, commit_message):
+            return None
+        
+        # Step 3: Create PR
+        pr_id = self.create_pull_request(
+            title=pr_title,
+            source_branch=branch_name,
+            destination_branch=destination_branch,
+            description=pr_description,
+            reviewers=reviewers
+        )
+        
+        return pr_id
+
+
+def main():
+    """Example usage"""
+    
+    # Configuration
+    WORKSPACE = "your-workspace"  # Your Bitbucket workspace
+    REPO_SLUG = "your-repo"       # Your repository name
+    USERNAME = "your.email@company.com"  # Your Bitbucket username/email
+    APP_PASSWORD = "your_app_password_or_token"  # App password or PAT
+    
+    # Proxy configuration for corporate network
+    # Adjust these based on your corporate proxy settings
+    PROXIES = {
+        'http': 'http://proxy.company.com:8080',
+        'https': 'http://proxy.company.com:8080'
+    }
+    
+    # Or get from environment variables (common in Jenkins)
+    if os.getenv('HTTP_PROXY'):
+        PROXIES = {
+            'http': os.getenv('HTTP_PROXY'),
+            'https': os.getenv('HTTPS_PROXY', os.getenv('HTTP_PROXY'))
+        }
+    
+    # File to upload
+    LOCAL_FILE = "path/to/your/local/file.txt"
+    REPO_FILE_PATH = "path/in/repo/file.txt"
+    
+    # Branch and PR details
+    BRANCH_NAME = f"feature/upload-{os.path.basename(LOCAL_FILE)}"
+    COMMIT_MSG = f"Add {os.path.basename(LOCAL_FILE)}"
+    PR_TITLE = f"Upload {os.path.basename(LOCAL_FILE)}"
+    PR_DESCRIPTION = "This PR adds the updated file via automated upload"
+    
+    # Initialize uploader
+    uploader = BitbucketPRUploader(
+        workspace=WORKSPACE,
+        repo_slug=REPO_SLUG,
+        username=USERNAME,
+        app_password=APP_PASSWORD,
+        proxies=PROXIES
+    )
+    
+    # Execute complete workflow
+    pr_id = uploader.upload_and_create_pr(
+        file_path=LOCAL_FILE,
+        repo_path=REPO_FILE_PATH,
+        branch_name=BRANCH_NAME,
+        pr_title=PR_TITLE,
+        commit_message=COMMIT_MSG,
+        pr_description=PR_DESCRIPTION,
+        source_branch="master",  # or "main" depending on your repo
+        destination_branch="master",
+        reviewers=None  # Add reviewer UUIDs if needed: ["uuid1", "uuid2"]
+    )
+    
+    if pr_id:
+        logger.info(f"✓ Complete! PR #{pr_id} created successfully")
+    else:
+        logger.error("✗ Failed to complete PR workflow")
+
+
+if __name__ == "__main__":
+    main()
