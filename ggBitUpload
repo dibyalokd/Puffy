@@ -1,0 +1,70 @@
+import requests
+import os
+import urllib3
+
+# Disable SSL warnings since you are using verify=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+class BitbucketAPIHelper:
+    def __init__(self, workspace, repo, token, proxy_url=None):
+        self.base_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}"
+        self.session = requests.Session()
+        
+        # 1. Setup SSO Token
+        self.session.headers.update({
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        })
+        
+        # 2. Setup Proxies & SSL
+        self.session.verify = False
+        if proxy_url:
+            self.session.proxies = {
+                "http": proxy_url,
+                "https": proxy_url
+            }
+
+    def create_branch(self, name, source="master"):
+        # Ensure we use the 2.0 API structure
+        url = f"{self.base_url}/refs/branches"
+        payload = {"name": name, "target": {"hash": source}}
+        # We use json= here to ensure correct Content-Type for the API
+        response = self.session.post(url, json=payload)
+        return response.status_code in [200, 201]
+
+    def upload_file(self, local_path, branch, commit_msg):
+        # The /src endpoint is strictly for file uploads
+        url = f"{self.base_url}/src"
+        with open(local_path, 'rb') as f:
+            files = {local_path: f}
+            data = {"message": commit_msg, "branch": branch}
+            # IMPORTANT: For /src, do NOT set a manual Content-Type header.
+            # Requests will generate a 'multipart/form-data' boundary automatically.
+            response = self.session.post(url, data=data, files=files)
+            return response.status_code == 201
+
+    def create_pr(self, title, source, dest="master"):
+        url = f"{self.base_url}/pullrequests"
+        payload = {
+            "title": title,
+            "source": {"branch": {"name": source}},
+            "destination": {"branch": {"name": dest}}
+        }
+        response = self.session.post(url, json=payload)
+        return response.status_code == 201
+
+# --- Usage on Jenkins Slave ---
+if __name__ == "__main__":
+    # Get your details from Jenkins Environment Variables
+    TOKEN = os.getenv('BITBUCKET_TOKEN')
+    PROXY = "http://your.proxy.server:8080" # Leave None if not needed
+    
+    bot = BitbucketAPIHelper("my-org", "my-repo", TOKEN, proxy_url=PROXY)
+    
+    new_branch = "jenkins-patch-01"
+    
+    if bot.create_branch(new_branch):
+        print("Branch created...")
+        if bot.upload_file("config.xml", new_branch, "Jenkins Auto-update"):
+            print("File uploaded...")
+            bot.create_pr("Update from Slave", new_branch)
