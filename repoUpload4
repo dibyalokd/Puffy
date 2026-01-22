@@ -1,0 +1,177 @@
+import requests
+import os
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+def upload_file_and_create_pr(repo_api_url, username, token, 
+                               local_file, repo_file_path, branch_name,
+                               pr_title, commit_message, 
+                               source_branch="master", dest_branch="master",
+                               proxies=None):
+    """
+    Upload file to Bitbucket and create PR
+    
+    Args:
+        repo_api_url: Bitbucket API URL for your repo 
+                      (e.g., "https://api.bitbucket.org/2.0/repositories/workspace/repo")
+        username: Your Bitbucket username/email
+        token: App password or token
+        local_file: Path to local file
+        repo_file_path: Where to put file in repo (e.g., "src/main/file.txt")
+        branch_name: New branch name for changes
+        pr_title: Title for pull request
+        commit_message: Commit message
+        source_branch: Branch to fork from (default: master)
+        dest_branch: Branch to merge into (default: master)
+        proxies: Optional proxy dict {'http': '...', 'https': '...'}
+    """
+    
+    auth = (username, token)
+    session = requests.Session()
+    session.auth = auth
+    if proxies:
+        session.proxies.update(proxies)
+    
+    try:
+        # Step 1: Get parent commit hash
+        logger.info(f"Getting latest commit from {source_branch}...")
+        branch_url = f"{repo_api_url}/refs/branches/{source_branch}"
+        
+        response = session.get(branch_url)
+        if response.status_code != 200:
+            logger.error(f"Failed to get branch: {response.status_code} - {response.text}")
+            return None
+        
+        parent_hash = response.json()['target']['hash']
+        logger.info(f"Parent commit: {parent_hash}")
+        
+        # Step 2: Read file
+        logger.info(f"Reading file: {local_file}")
+        with open(local_file, 'rb') as f:
+            file_content = f.read()
+        
+        # Step 3: Upload file using /src endpoint
+        logger.info(f"Creating commit on branch: {branch_name}")
+        
+        upload_url = f"{repo_api_url}/src"
+        
+        files = {
+            repo_file_path: file_content
+        }
+        
+        data = {
+            'message': commit_message,
+            'branch': branch_name,
+        }
+        
+        logger.info(f"POST {upload_url}")
+        response = session.post(upload_url, files=files, data=data)
+        
+        logger.info(f"Upload status: {response.status_code}")
+        
+        if response.status_code not in [200, 201]:
+            logger.error(f"Upload failed: {response.text}")
+            return None
+        
+        logger.info("✓ File committed successfully")
+        
+        # Step 4: Create Pull Request
+        logger.info("Creating pull request...")
+        
+        pr_url = f"{repo_api_url}/pullrequests"
+        
+        pr_payload = {
+            "title": pr_title,
+            "source": {
+                "branch": {
+                    "name": branch_name
+                }
+            },
+            "destination": {
+                "branch": {
+                    "name": dest_branch
+                }
+            },
+            "description": commit_message,
+            "close_source_branch": True
+        }
+        
+        logger.info(f"POST {pr_url}")
+        pr_response = session.post(pr_url, json=pr_payload)
+        
+        logger.info(f"PR status: {pr_response.status_code}")
+        
+        if pr_response.status_code not in [200, 201]:
+            logger.error(f"PR failed: {pr_response.text}")
+            return None
+        
+        pr_data = pr_response.json()
+        pr_id = pr_data['id']
+        pr_link = pr_data['links']['html']['href']
+        
+        logger.info(f"✓ Pull Request created!")
+        logger.info(f"  PR ID: {pr_id}")
+        logger.info(f"  URL: {pr_link}")
+        
+        return pr_id
+        
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        if hasattr(e, 'response') and e.response:
+            logger.error(f"Status: {e.response.status_code}")
+            logger.error(f"Body: {e.response.text}")
+        return None
+
+
+# Example usage
+if __name__ == "__main__":
+    
+    # Just provide your full API URL
+    REPO_API_URL = "https://api.bitbucket.org/2.0/repositories/yourworkspace/yourrepo"
+    USERNAME = "your.email@company.com"
+    TOKEN = "your_app_password"
+    
+    # Proxy setup (if needed)
+    PROXIES = {
+        'http': 'http://proxy.company.com:8080',
+        'https': 'http://proxy.company.com:8080'
+    }
+    
+    # Or from environment
+    if os.getenv('HTTP_PROXY'):
+        PROXIES = {
+            'http': os.getenv('HTTP_PROXY'),
+            'https': os.getenv('HTTPS_PROXY', os.getenv('HTTP_PROXY'))
+        }
+    else:
+        PROXIES = None
+    
+    # File details
+    LOCAL_FILE = "test.txt"
+    REPO_PATH = "src/test.txt"
+    BRANCH = "feature/auto-upload"
+    PR_TITLE = "Auto upload test file"
+    COMMIT_MSG = "Add test file via API"
+    
+    # Run it
+    pr_id = upload_file_and_create_pr(
+        repo_api_url=REPO_API_URL,
+        username=USERNAME,
+        token=TOKEN,
+        local_file=LOCAL_FILE,
+        repo_file_path=REPO_PATH,
+        branch_name=BRANCH,
+        pr_title=PR_TITLE,
+        commit_message=COMMIT_MSG,
+        source_branch="master",
+        dest_branch="master",
+        proxies=PROXIES
+    )
+    
+    if pr_id:
+        print(f"\n✓ SUCCESS! PR #{pr_id} created")
+    else:
+        print("\n✗ FAILED - check logs above")
