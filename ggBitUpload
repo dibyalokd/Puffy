@@ -1,6 +1,120 @@
 import requests
 import os
 import urllib3
+import json
+
+# Disable SSL warnings for LAN environments
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+class BitbucketAutomation:
+    def __init__(self, workspace, repo, token, proxy_url=None):
+        # Ensure workspace and repo are lowercase (Bitbucket API requirement)
+        self.workspace = workspace.lower()
+        self.repo = repo.lower()
+        self.base_url = f"https://api.bitbucket.org/2.0/repositories/{self.workspace}/{self.repo}"
+        
+        self.session = requests.Session()
+        self.session.verify = False
+        self.session.headers.update({
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        })
+        
+        if proxy_url:
+            self.session.proxies = {"http": proxy_url, "https": proxy_url}
+
+    def _log_error(self, action, response):
+        """Helper to capture and print detailed API errors"""
+        print(f"\n--- FAILED: {action} ---")
+        print(f"Status Code: {response.status_code}")
+        try:
+            # Try to print the JSON error message from Bitbucket
+            print(f"Response Body: {json.dumps(response.json(), indent=2)}")
+        except:
+            print(f"Raw Response: {response.text}")
+        print("---------------------------\n")
+
+    def create_branch(self, name, source_hash_or_name="master"):
+        url = f"{self.base_url}/refs/branches"
+        # Bitbucket 2.0 API expects this specific structure
+        payload = {
+            "name": name,
+            "target": {"hash": source_hash_or_name}
+        }
+        
+        response = self.session.post(url, json=payload)
+        
+        if response.status_code in [200, 201]:
+            print(f"Successfully created branch: {name}")
+            return True
+        else:
+            self._log_error("BRANCH CREATION", response)
+            return False
+
+    def upload_file(self, local_path, branch, commit_msg):
+        url = f"{self.base_url}/src"
+        if not os.path.exists(local_path):
+            print(f"FATAL: File {local_path} not found on slave.")
+            return False
+
+        with open(local_path, 'rb') as f:
+            files = {"/": (local_path, f)} # The key is the path in the repo
+            data = {
+                "message": commit_msg,
+                "branch": branch
+            }
+            # We DON'T set headers here, requests handles boundary automatically
+            response = self.session.post(url, data=data, files=files)
+            
+            if response.status_code == 201:
+                print(f"Successfully uploaded {local_path} to {branch}")
+                return True
+            else:
+                self._log_error("FILE UPLOAD", response)
+                return False
+
+    def create_pr(self, title, source, dest="master"):
+        url = f"{self.base_url}/pullrequests"
+        payload = {
+            "title": title,
+            "source": {"branch": {"name": source}},
+            "destination": {"branch": {"name": dest}}
+        }
+        response = self.session.post(url, json=payload)
+        
+        if response.status_code == 201:
+            print(f"PR Created: {response.json()['links']['html']['href']}")
+            return True
+        else:
+            self._log_error("PR CREATION", response)
+            return False
+
+# --- Jenkins Entry Point ---
+if __name__ == "__main__":
+    # 1. Setup Variables
+    TOKEN = os.getenv('BB_TOKEN')
+    PROXY = "http://your.internal.proxy:8080" # Set to None if no proxy
+    
+    # 2. Initialize
+    bot = BitbucketAutomation("your-workspace", "your-repo", TOKEN, proxy_url=PROXY)
+    
+    # 3. Process
+    BRANCH_NAME = "fix/automated-jenkins-update"
+    FILE_NAME = "output.txt"
+    
+    print(f"Starting automation for {BRANCH_NAME}...")
+    
+    if bot.create_branch(BRANCH_NAME):
+        if bot.upload_file(FILE_NAME, BRANCH_NAME, "Jenkins auto-upload"):
+            bot.create_pr("Automated PR from Jenkins", BRANCH_NAME)
+
+
+
+----------------
+
+import requests
+import os
+import urllib3
 
 # Disable SSL warnings since you are using verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
