@@ -1,3 +1,27 @@
+import subprocess
+
+def upload_safe(filename, repo_url):
+    try:
+        # 1. Stage and Commit your file locally
+        subprocess.run(["git", "add", filename], check=True)
+        subprocess.run(["git", "commit", "-m", "Updating file"], check=True)
+
+        # 2. Pull the remote changes
+        # '--rebase' keeps your history clean by putting your commit on top
+        print("Pulling remote changes...")
+        subprocess.run(["git", "pull", "origin", "master", "--rebase"], check=True)
+
+        # 3. Now push
+        subprocess.run(["git", "push", "origin", "master"], check=True)
+        print("Upload successful!")
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error: {e}")
+
+
+----------
+
+
 def reset_and_upload(file_path, repo_url):
     # Force Git to 'forget' the old URL and use the new one provided
     subprocess.run(["git", "remote", "remove", "origin"], capture_output=True)
