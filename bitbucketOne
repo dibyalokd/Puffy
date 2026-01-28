@@ -1,0 +1,37 @@
+import subprocess
+import os
+
+def upload_to_bitbucket(file_path, repo_url, commit_message):
+    """
+    Uploads a specific file to the master branch of a Bitbucket repo.
+    """
+    try:
+        # 1. Initialize git if not already a repo
+        if not os.path.exists(".git"):
+            subprocess.run(["git", "init"], check=True)
+            subprocess.run(["git", "remote", "add", "origin", repo_url], check=True)
+
+        # 2. Add the specific file
+        subprocess.run(["git", "add", file_path], check=True)
+
+        # 3. Commit the changes
+        subprocess.run(["git", "commit", "-m", commit_message], check=True)
+
+        # 4. Push to 'master'
+        # We use -u to set upstream, and 'master' as requested
+        result = subprocess.run(["git", "push", "-u", "origin", "master"], 
+                                capture_output=True, text=True, check=True)
+        
+        print("Success! File uploaded to master branch.")
+        print(result.stdout)
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error during Git execution: {e.stderr}")
+
+# --- Configuration ---
+FILE_TO_UPLOAD = "your_file.txt"
+BITBUCKET_URL = "https://username@bitbucket.org/workspace/repo.git"
+MSG = "Add automated file via Python subprocess"
+
+# Execute
+upload_to_bitbucket(FILE_TO_UPLOAD, BITBUCKET_URL, MSG)
