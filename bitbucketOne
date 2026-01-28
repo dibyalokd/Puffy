@@ -1,3 +1,14 @@
+def reset_and_upload(file_path, repo_url):
+    # Force Git to 'forget' the old URL and use the new one provided
+    subprocess.run(["git", "remote", "remove", "origin"], capture_output=True)
+    subprocess.run(["git", "remote", "add", "origin", repo_url], check=True)
+    
+    # Now proceed with add, commit, push...
+    subprocess.run(["git", "push", "-u", "origin", "master"], check=True)
+
+
+------
+
 import subprocess
 import sys
 
