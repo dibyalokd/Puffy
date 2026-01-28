@@ -1,0 +1,48 @@
+import subprocess
+import os
+
+def upload_to_bitbucket_final(file_path, repo_url, commit_msg="Automated Update"):
+    try:
+        # 1. Initialize and set Remote
+        if not os.path.exists(".git"):
+            subprocess.run(["git", "init"], check=True)
+        
+        # We'll use a unique remote name to avoid Jenkins conflicts
+        remote_name = "bridge_remote"
+        subprocess.run(["git", "remote", "remove", remote_name], capture_output=True)
+        subprocess.run(["git", "remote", "add", remote_name, repo_url], check=True)
+
+        # 2. THE FIX: Ensure we are actually on a branch named 'master'
+        # This creates 'master' if it doesn't exist, or switches to it if it does
+        subprocess.run(["git", "checkout", "-B", "master"], check=True)
+
+        # 3. Stage and Commit
+        subprocess.run(["git", "add", "-f", file_path], check=True)
+        
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout
+        if not status:
+            print("No changes to commit.")
+        else:
+            subprocess.run(["git", "commit", "-m", commit_msg], check=True)
+
+        # 4. Sync with Remote (Crucial for Jenkins)
+        print("Fetching and Rebuilding history...")
+        subprocess.run(["git", "fetch", remote_name, "master"], check=True)
+        # Force local master to track remote master
+        subprocess.run(["git", "rebase", f"{remote_name}/master"], check=True)
+
+        # 5. Push
+        print("Pushing to master...")
+        subprocess.run(["git", "push", remote_name, "master"], check=True)
+        
+        print("✅ Success! Refspec error resolved and file uploaded.")
+
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Git Command Failed: {e.cmd}")
+        print(f"Error Output: {e.stderr if e.stderr else 'Check your logs'}")
+    finally:
+        # Cleanup remote so Jenkins stays clean
+        subprocess.run(["git", "remote", "remove", remote_name], capture_output=True)
+
+# Usage
+upload_to_bitbucket_final("your_file.txt", "https://user:token@bitbucket.org/work/repo.git")
