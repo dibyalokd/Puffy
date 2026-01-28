@@ -1,0 +1,45 @@
+import subprocess
+import os
+
+def upload_from_jenkins(file_path, repo_url, commit_msg="Jenkins Auto-update"):
+    try:
+        # 1. Stage the file
+        subprocess.run(["git", "add", "-f", file_path], check=True)
+
+        # 2. Commit only if changes exist
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout
+        if not status:
+            print("No changes detected. Skipping push.")
+            return
+
+        subprocess.run(["git", "commit", "-m", commit_msg], check=True)
+
+        # 3. Use a TEMPORARY remote to avoid messing with Jenkins credentials
+        temp_remote = "temp_bitbucket"
+        # Clean up if a previous run crashed
+        subprocess.run(["git", "remote", "remove", temp_remote], capture_output=True)
+        
+        print("Adding temporary push remote...")
+        subprocess.run(["git", "remote", "add", temp_remote, repo_url], check=True)
+
+        # 4. Pull/Rebase from the temporary remote to handle conflicts
+        print("Syncing with master...")
+        subprocess.run(["git", "pull", "--rebase", temp_remote, "master"], check=True)
+
+        # 5. Push using the temporary remote
+        print("Pushing updates...")
+        subprocess.run(["git", "push", temp_remote, "master"], check=True)
+
+        # 6. Cleanup: Remove the temporary remote so Jenkins doesn't see it
+        subprocess.run(["git", "remote", "remove", temp_remote], check=True)
+        
+        print("✅ Upload complete. Jenkins workspace remains clean.")
+
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Git Error: {e.stderr if e.stderr else e}")
+        # Ensure cleanup even on failure
+        subprocess.run(["git", "remote", "remove", "temp_bitbucket"], capture_output=True)
+
+# Usage
+MY_URL = "https://your_user:your_token@bitbucket.org/workspace/repo.git"
+upload_from_jenkins("target_file.txt", MY_URL)
