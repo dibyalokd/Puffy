@@ -1,4 +1,66 @@
 import subprocess
+import os
+
+def upload_file_safe(file_path, repo_url, commit_message="Update via Python Script"):
+    """
+    Safely uploads a file to the 'master' branch of a Bitbucket repo.
+    Handles existing remote work by rebasing.
+    """
+    try:
+        # --- 1. SETUP / CACHE CLEARING ---
+        if not os.path.exists(".git"):
+            subprocess.run(["git", "init"], check=True)
+        
+        # Reset the remote 'origin' to ensure we use the NEW URL/Token provided
+        subprocess.run(["git", "remote", "remove", "origin"], capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", repo_url], check=True)
+
+        # --- 2. STAGING & LOCAL COMMIT ---
+        print(f"Staging {file_path}...")
+        # -f forces the add even if ignored by .gitignore
+        subprocess.run(["git", "add", "-f", file_path], check=True)
+        
+        # Check if there is actually anything to commit
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout
+        if not status:
+            print("No changes to upload. Local matches remote.")
+            return
+
+        subprocess.run(["git", "commit", "-m", commit_message], check=True)
+
+        # --- 3. SAFE SYNC (THE PULL) ---
+        print("Fetching remote changes to stay 'Safe'...")
+        # We fetch first to see what's on Bitbucket
+        subprocess.run(["git", "fetch", "origin", "master"], check=True)
+        
+        # Rebase puts your local commit on TOP of whatever is on Bitbucket
+        print("Rebasing local changes...")
+        subprocess.run(["git", "pull", "--rebase", "origin", "master"], check=True)
+
+        # --- 4. THE PUSH ---
+        print("Pushing to Bitbucket master...")
+        subprocess.run(["git", "push", "origin", "master"], check=True)
+        
+        print("🚀 Success! Your file is now on Bitbucket master branch.")
+
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error during Git process: {e}")
+        if e.stderr:
+            print(f"Details: {e.stderr}")
+    except Exception as ex:
+        print(f"An unexpected error occurred: {ex}")
+
+# --- EXECUTION ---
+# Use the format: https://username:password_or_token@bitbucket.org/workspace/repo.git
+MY_FILE = "my_report.txt"
+MY_URL = "https://your_user:your_token@bitbucket.org/your_team/your_repo.git"
+
+upload_file_safe(MY_FILE, MY_URL)
+
+
+--------
+
+import subprocess
 
 def upload_safe(filename, repo_url):
     try:
