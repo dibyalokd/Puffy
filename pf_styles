@@ -158,3 +158,44 @@ a:hover {
     border-radius: 25px;
 }
 
+
+-----update the below:
+/* ===== Chat Input Bar ===== */
+.chat-input {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    margin: 20px auto;
+}
+
+/* Input and button SAME height */
+.chat-input input {
+    width: 55%;
+    height: 44px;
+    padding: 0 16px;
+    border-radius: 22px;
+    border: 1px solid #2a2f3f;
+    background: #0f1117;
+    color: #e6e6e6;
+    font-size: 15px;
+    outline: none;
+}
+
+.chat-input button {
+    height: 44px;
+    padding: 0 22px;
+    border-radius: 22px;
+    border: none;
+    background: linear-gradient(135deg, #007cff, #00c6ff);
+    color: white;
+    font-size: 15px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.chat-input button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 18px rgba(0, 198, 255, 0.5);
+}
+
