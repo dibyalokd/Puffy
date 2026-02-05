@@ -1,0 +1,224 @@
+/* =========================
+   GLOBAL
+========================= */
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont;
+    background: #0f1117;
+    color: #e6e6e6;
+    text-align: center;
+}
+
+h1, h2 {
+    margin-top: 30px;
+    color: #f1f1f1;
+}
+
+a {
+    color: #5aa9ff;
+    text-decoration: none;
+    font-size: 14px;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+
+/* =========================
+   LANDING PAGE
+========================= */
+
+.container {
+    display: flex;
+    justify-content: center;
+    gap: 50px;
+    margin-top: 70px;
+}
+
+.card {
+    background: #161a23;
+    padding: 50px 30px;
+    width: 220px;
+    border-radius: 16px;
+    font-size: 22px;
+    text-decoration: none;
+    color: #e6e6e6;
+    box-shadow: 0 0 25px rgba(0, 0, 0, 0.6);
+    transition: all 0.25s ease;
+}
+
+.card:hover {
+    transform: translateY(-6px);
+    background: #1f2533;
+    box-shadow: 0 0 40px rgba(0, 150, 255, 0.25);
+}
+
+
+/* =========================
+   RECORDER PAGE
+========================= */
+
+textarea {
+    width: 65%;
+    height: 180px;
+    background: #161a23;
+    color: #e6e6e6;
+    border: 1px solid #2a2f3f;
+    border-radius: 12px;
+    padding: 15px;
+    font-size: 16px;
+    outline: none;
+    resize: none;
+}
+
+textarea::placeholder {
+    color: #8a8f9c;
+}
+
+button {
+    margin-top: 20px;
+    padding: 12px 30px;
+    font-size: 16px;
+    border-radius: 25px;
+    border: none;
+    background: linear-gradient(135deg, #007cff, #00c6ff);
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.25s ease;
+}
+
+button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 20px rgba(0, 198, 255, 0.5);
+}
+
+
+/* =========================
+   CHAT PAGE LAYOUT
+========================= */
+
+.chat-wrapper {
+    width: 75%;
+    margin: 30px auto;
+    display: flex;
+    flex-direction: column;
+}
+
+
+/* =========================
+   SCROLLABLE CHAT AREA
+========================= */
+
+.chat-container {
+    height: 420px;
+    background: #161a23;
+    border-radius: 16px;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.6);
+}
+
+
+/* =========================
+   CHAT BUBBLES (REAL ONES)
+========================= */
+
+.chat-message {
+    position: relative;
+    max-width: 70%;
+    padding: 12px 16px;
+    border-radius: 18px;
+    font-size: 15px;
+    line-height: 1.4;
+    word-wrap: break-word;
+}
+
+/* -------- AI bubble -------- */
+.chat-message.ai {
+    align-self: flex-start;
+    background: #1f2533;
+    color: #e6e6e6;
+    border-top-left-radius: 6px;
+}
+
+.chat-message.ai::before {
+    content: "";
+    position: absolute;
+    left: -8px;
+    top: 12px;
+    width: 0;
+    height: 0;
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
+    border-right: 8px solid #1f2533;
+}
+
+/* -------- User bubble -------- */
+.chat-message.user {
+    align-self: flex-end;
+    background: linear-gradient(135deg, #007cff, #00c6ff);
+    color: white;
+    border-top-right-radius: 6px;
+}
+
+.chat-message.user::before {
+    content: "";
+    position: absolute;
+    right: -8px;
+    top: 12px;
+    width: 0;
+    height: 0;
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
+    border-left: 8px solid #00c6ff;
+}
+
+
+/* =========================
+   CHAT INPUT BAR
+========================= */
+
+.chat-input {
+    display: flex;
+    gap: 12px;
+    margin-top: 15px;
+}
+
+.chat-input input {
+    flex: 1;
+    height: 44px;
+    padding: 0 16px;
+    border-radius: 22px;
+    border: 1px solid #2a2f3f;
+    background: #0f1117;
+    color: #e6e6e6;
+    font-size: 15px;
+    outline: none;
+}
+
+.chat-input input::placeholder {
+    color: #8a8f9c;
+}
+
+.chat-input button {
+    height: 44px;
+    padding: 0 22px;
+    border-radius: 22px;
+    border: none;
+    background: linear-gradient(135deg, #007cff, #00c6ff);
+    color: white;
+    font-size: 15px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.chat-input button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 18px rgba(0, 198, 255, 0.5);
+}
