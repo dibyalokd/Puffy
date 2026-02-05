@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Task Memory Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<h2>💬 Task Memory Chat</h2>
+
+<div class="chat-wrapper">
+
+    <div class="chat-container">
+
+        <div class="chat-message ai">
+            👋 I remember everything you recorded. Ask me anything.
+        </div>
+
+        {% for msg in chat_history %}
+            <div class="chat-message {{ msg.role }}">
+                {{ msg.content }}
+            </div>
+        {% endfor %}
+
+    </div>
+
+    <form method="POST" class="chat-input">
+        <input
+            name="query"
+            type="text"
+            placeholder="Ask about your work..."
+            autofocus
+            required
+        >
+        <button type="submit">Send</button>
+    </form>
+
+</div>
+
+</body>
+</html>
