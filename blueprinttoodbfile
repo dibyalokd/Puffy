@@ -2,6 +2,64 @@ import chromadb
 import re
 
 def ingest_blueprints(file_path):
+    # 1. Initialize Local Persistent Client
+    client = chromadb.PersistentClient(path="./chroma_db")
+    
+    # Use a specific embedding function if you want, 
+    # otherwise it uses the default (all-MiniLM-L6-v2)
+    collection = client.get_or_create_collection(name="blueprints_collection")
+
+    with open(file_path, 'r') as f:
+        content = f.read()
+
+    # 2. Split into blocks
+    blocks = content.split('<-------->')
+    
+    ids_to_insert = []
+    docs_to_insert = []
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+            
+        # Extract ID: looks for # Blueprint: [ID_HERE]
+        match = re.search(r'# Blueprint:\s*\[(.*?)\]', block)
+        
+        if match:
+            blueprint_id = match.group(1).strip()
+            # Body: everything after the first newline
+            lines = block.split('\n')
+            data_body = "\n".join(lines[1:]).strip()
+
+            ids_to_insert.append(blueprint_id)
+            docs_to_insert.append(data_body)
+
+    # 3. Batch Upload (This prevents the timeout)
+    if ids_to_insert:
+        print(f"📦 Found {len(ids_to_insert)} blueprints. Starting batch ingestion...")
+        try:
+            # upsert is better: it updates if the ID already exists
+            collection.upsert(
+                documents=docs_to_insert,
+                ids=ids_to_insert
+            )
+            print("✨ Successfully indexed all data.")
+        except Exception as e:
+            print(f"❌ Error during ingestion: {e}")
+
+if __name__ == "__main__":
+    ingest_blueprints("data.txt")
+
+
+
+
+---------
+
+import chromadb
+import re
+
+def ingest_blueprints(file_path):
     # 1. Initialize Chroma Client (Persistent)
     client = chromadb.PersistentClient(path="./chroma_db")
     
