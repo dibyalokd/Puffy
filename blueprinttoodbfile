@@ -1,0 +1,41 @@
+import chromadb
+import re
+
+def ingest_blueprints(file_path):
+    # 1. Initialize Chroma Client (Persistent)
+    client = chromadb.PersistentClient(path="./chroma_db")
+    
+    # Create or get the collection
+    collection = client.get_or_create_collection(name="blueprints_collection")
+
+    with open(file_path, 'r') as f:
+        content = f.read()
+
+    # 2. Split by the separator
+    blocks = content.split('<-------->')
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+            
+        # 3. Extract ID using Regex
+        # Matches "# Blueprint: [ids]" and captures the "ids" part
+        match = re.search(r'# Blueprint:\s*\[(.*?)\]', block)
+        
+        if match:
+            blueprint_id = match.group(1).strip()
+            # Remove the header line to get just the "some data" body
+            data_body = re.sub(r'# Blueprint:.*?\n', '', block, count=1).strip()
+
+            # 4. Upsert into Chroma
+            # We use upsert so it updates if the ID already exists
+            collection.upsert(
+                documents=[data_body],
+                ids=[blueprint_id],
+                metadatas=[{"source": "text_file"}]
+            )
+            print(f"✅ Indexed Blueprint: {blueprint_id}")
+
+if __name__ == "__main__":
+    ingest_blueprints("data.txt")
