@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Task Query</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h2>🔍 Task Query</h2>
+
+    <div class="chat-box">
+        <p><i>Conversational AI will live here 👀</i></p>
+    </div>
+
+    <br>
+    <a href="/">⬅ Back</a>
+</body>
+</html>
