@@ -199,3 +199,10 @@ a:hover {
     box-shadow: 0 0 18px rgba(0, 198, 255, 0.5);
 }
 
+.chat-message.user {
+    background: #007cff;
+    align-self: flex-end;
+    color: white;
+}
+
+
