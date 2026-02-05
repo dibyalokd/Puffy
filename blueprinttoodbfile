@@ -1,3 +1,61 @@
+
+
+import sqlite3
+import re
+
+def ingest_to_sqlite(file_path, db_name="blueprints.db"):
+    # 1. Connect and Setup Table
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+    
+    # Create table: blueprint_id is the Primary Key to ensure uniqueness
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS blueprints (
+            blueprint_id TEXT PRIMARY KEY,
+            data TEXT
+        )
+    ''')
+
+    # 2. Parse the File
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    blocks = content.split('<-------->')
+    
+    data_to_insert = []
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+            
+        # Regex to find the ID inside the brackets
+        match = re.search(r'# Blueprint:\s*\[(.*?)\]', block)
+        
+        if match:
+            blueprint_id = match.group(1).strip()
+            # Strip the first line (the header) to get the body
+            data_body = re.sub(r'# Blueprint:.*?\n', '', block, count=1).strip()
+            
+            data_to_insert.append((blueprint_id, data_body))
+
+    # 3. Batch Insert (Atomic Transaction)
+    # REPLACE handles the "unique ID" requirement—if ID exists, it updates the data.
+    cursor.executemany('''
+        INSERT OR REPLACE INTO blueprints (blueprint_id, data)
+        VALUES (?, ?)
+    ''', data_to_insert)
+
+    conn.commit()
+    conn.close()
+    print(f"✅ Processed {len(data_to_insert)} blueprints into {db_name}")
+
+if __name__ == "__main__":
+    ingest_to_sqlite("data.txt")
+
+
+
+
 import chromadb
 import re
 
