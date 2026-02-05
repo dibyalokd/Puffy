@@ -1,7 +1,9 @@
 from flask import Flask, render_template, request, redirect, url_for
-from datetime import datetime
+from memory_store import store_note, query_notes, init_sqlite
 
 app = Flask(__name__)
+
+init_sqlite()
 
 @app.route("/")
 def index():
@@ -11,20 +13,18 @@ def index():
 def record_task():
     if request.method == "POST":
         task_text = request.form.get("task")
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # 🚧 PHASE-2 WILL GO HERE
-        # store(task_text, timestamp)
-
-        print(f"[RECORDED @ {timestamp}] {task_text}")
-
+        if task_text.strip():
+            store_note(task_text)
         return redirect(url_for("record_task"))
-
     return render_template("recorder.html")
 
-@app.route("/query")
+@app.route("/query", methods=["GET", "POST"])
 def query_task():
-    return render_template("query.html")
+    response = None
+    if request.method == "POST":
+        user_query = request.form.get("query")
+        response = query_notes(user_query)
+    return render_template("query.html", response=response)
 
 if __name__ == "__main__":
     app.run(debug=True)
