@@ -1,3 +1,59 @@
+def query_notes(user_query: str, top_k: int = 5):
+
+    # 1️⃣ Embed query
+    query_embedding = ConnectEmbed(user_query)
+
+    # 2️⃣ Try semantic search
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=top_k
+    )
+
+    note_ids = results.get("ids", [[]])[0]
+
+    conn = get_sqlite_conn()
+    cur = conn.cursor()
+
+    # 3️⃣ FALLBACK: If Chroma empty, use SQLite directly
+    if not note_ids:
+        print("⚠️ Chroma empty, falling back to SQLite")
+
+        cur.execute(
+            "SELECT content, timestamp FROM notes ORDER BY timestamp DESC LIMIT ?",
+            (top_k,)
+        )
+        rows = cur.fetchall()
+    else:
+        placeholders = ",".join("?" for _ in note_ids)
+        cur.execute(
+            f"SELECT content, timestamp FROM notes WHERE id IN ({placeholders})",
+            note_ids
+        )
+        rows = cur.fetchall()
+
+    conn.close()
+
+    if not rows:
+        return "No notes found yet."
+
+    # 4️⃣ Build context
+    context = ""
+    for content, timestamp in rows:
+        context += f"[{timestamp}]\n{content}\n\n"
+
+    prompt = f"""
+You are my personal work memory assistant.
+
+Based on the following past notes, answer clearly.
+
+PAST NOTES:
+{context}
+
+USER QUERY:
+{user_query}
+"""
+
+    return ConnectLLM(prompt)
 
 ;;;;;
 def rebuild_chroma_from_sqlite():
