@@ -1,3 +1,9 @@
+def get_blueprint(bp_id):
+    conn = sqlite3.connect("blueprints.db")
+    res = conn.execute("SELECT data FROM blueprints WHERE blueprint_id=?", (bp_id,))
+    row = res.fetchone()
+    conn.close()
+    return row[0] if row else "Not found"
 
 
 import sqlite3
