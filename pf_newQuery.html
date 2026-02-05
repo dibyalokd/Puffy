@@ -26,6 +26,86 @@
             {% endfor %}
         {% endif %}
 
+        <!-- Typing indicator (shown before submit only) -->
+        <div class="chat-message ai typing" id="typing-indicator">
+            <span></span><span></span><span></span>
+        </div>
+
+    </div>
+
+    <!-- Input -->
+    <form method="POST" class="chat-input" id="chat-form">
+        <input
+            name="query"
+            id="chat-input"
+            type="text"
+            placeholder="Ask about your work..."
+            autocomplete="off"
+            autofocus
+            required
+        >
+        <button type="submit">Send</button>
+    </form>
+
+</div>
+
+<br>
+<a href="/">⬅ Back</a>
+
+<script>
+    const chatContainer = document.getElementById("chat-container");
+    const typingIndicator = document.getElementById("typing-indicator");
+    const input = document.getElementById("chat-input");
+
+    // Always scroll to bottom on load
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+
+    // Always focus input on load
+    input.focus();
+
+    // Show typing indicator JUST BEFORE submit
+    document.getElementById("chat-form").addEventListener("submit", function () {
+        typingIndicator.style.display = "flex";
+        setTimeout(() => {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }, 50);
+        // IMPORTANT: do NOT prevent default
+    });
+</script>
+
+</body>
+</html>
+
+:::::::::::::::::::
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Task Memory Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<h2>💬 Task Memory Chat</h2>
+
+<div class="chat-wrapper">
+
+    <!-- Chat Area -->
+    <div class="chat-container" id="chat-container">
+
+        <div class="chat-message ai">
+            👋 I remember everything you recorded. Ask me anything.
+        </div>
+
+        {% if chat_history %}
+            {% for msg in chat_history %}
+                <div class="chat-message {{ msg.role }}">
+                    {{ msg.content }}
+                </div>
+            {% endfor %}
+        {% endif %}
+
         <!-- Typing indicator -->
         <div class="chat-message ai typing" id="typing-indicator">
             <span></span><span></span><span></span>
