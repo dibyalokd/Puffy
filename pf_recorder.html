@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Task Recorder</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h2>📝 Record Your Task</h2>
+
+    <form method="POST">
+        <textarea name="task" placeholder="Dump your thoughts here..." required></textarea>
+        <br>
+        <button type="submit">Record</button>
+    </form>
+
+    <br>
+    <a href="/">⬅ Back</a>
+</body>
+</html>
