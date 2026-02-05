@@ -1,3 +1,38 @@
+
+;;;;;
+def rebuild_chroma_from_sqlite():
+    """
+    One-time recovery utility.
+    Rebuilds Chroma index from SQLite (source of truth).
+    """
+    conn = get_sqlite_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT id, content, timestamp FROM notes")
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        print("⚠️ No notes found in SQLite. Nothing to rebuild.")
+        return
+
+    # Clear existing Chroma index
+    collection.delete(where={})
+
+    for note_id, content, timestamp in rows:
+        embedding = ConnectEmbed(content)
+        collection.add(
+            ids=[note_id],
+            embeddings=[embedding],
+            metadatas=[{"timestamp": timestamp}]
+        )
+
+    print("✅ Chroma rebuilt from SQLite")
+    print("🔢 Total vectors:", collection.count())
+
+
+;;;;;
+
 import sqlite3
 import uuid
 from datetime import datetime
