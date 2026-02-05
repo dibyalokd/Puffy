@@ -1,24 +1,44 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Task Query</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+
     <h2>🔍 Task Query</h2>
 
+    <!-- Chat Container -->
     <div class="chat-container">
+
+        <!-- Initial system message -->
         <div class="chat-message ai">
-            👋 Ask me anything about your past work…
+            👋 Ask me anything about your past work and I’ll summarize it for you.
         </div>
+
+        <!-- AI Response -->
+        {% if response %}
+        <div class="chat-message ai">
+            {{ response }}
+        </div>
+        {% endif %}
+
     </div>
 
-    <form class="chat-input">
-        <input type="text" placeholder="e.g. What did I work on yesterday?" disabled>
-        <button disabled>Send</button>
+    <!-- Chat Input -->
+    <form method="POST" class="chat-input">
+        <input
+            name="query"
+            type="text"
+            placeholder="Ask about your past work..."
+            required
+        >
+        <button type="submit">Send</button>
     </form>
 
     <br>
     <a href="/">⬅ Back</a>
+
 </body>
 </html>
