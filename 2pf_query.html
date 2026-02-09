@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <title>Query Vault</title>
+</head>
+<body>
+    <div class="container">
+        <a href="/" style="color: #00adb5; text-decoration: none; font-size: 0.9rem;">← Back to Home</a>
+        <h1 style="margin-top: 20px;">Query Your History</h1>
+
+<!--        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">-->
+<!--            <button type="button" onclick="setQuery('Give me a summary of everything I did today.')" style="background: #333; font-size: 0.8rem;">Today's Report</button>-->
+<!--            <button type="button" onclick="setQuery('Summarize my workload for the past 7 days.')" style="background: #333; font-size: 0.8rem;">Weekly Summary</button>-->
+<!--        </div>-->
+
+<!--        <script>-->
+<!--            function setQuery(text) {-->
+<!--                document.getElementsByName('query')[0].value = text;-->
+<!--            }-->
+<!--        </script>-->
+
+        <form action="/query" method="POST">
+            <input type="text" name="query" placeholder="e.g., What was I working on last Tuesday?" required>
+            <button type="submit">Analyze Records</button>
+        </form>
+
+        {% if summary %}
+        <div class="summary-box">
+            <h3 style="color: #00adb5; margin-top: 0;">Summary</h3>
+            <p style="line-height: 1.6;">{{ summary }}</p>
+        </div>
+
+        <div style="margin-top: 40px; text-align: left;">
+            <h4 style="color: #888; border-bottom: 1px solid #333; padding-bottom: 10px;">Reference Records</h4>
+            {% for source in sources %}
+            <div style="background: #1a1a1a; padding: 15px; border-radius: 8px; margin-bottom: 10px; font-size: 0.9rem; border: 1px solid #222;">
+                {{ source }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>
