@@ -1,0 +1,92 @@
+body {
+    background-color: #121212;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding-top: 50px;
+}
+
+.container {
+    width: 80%;
+    max-width: 800px;
+    text-align: center;
+}
+
+.card-container {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-top: 40px;
+}
+
+.card {
+    background-color: #1e1e1e;
+    padding: 30px;
+    border-radius: 12px;
+    width: 200px;
+    text-decoration: none;
+    color: white;
+    border: 1px solid #333;
+    transition: 0.3s;
+}
+
+.card:hover {
+    border-color: #00adb5;
+    transform: translateY(-5px);
+}
+
+textarea, input {
+    width: 100%;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    color: white;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+button {
+    background-color: #00adb5;
+    color: white;
+    border: none;
+    padding: 12px 25px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.summary-box {
+    background: #252525;
+    padding: 20px;
+    border-left: 4px solid #00adb5;
+    text-align: left;
+    margin-top: 20px;
+}
+
+/* Toast Banner Styles */
+.toast-banner {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #00adb5;
+    color: white;
+    padding: 12px 25px;
+    border-radius: 50px; /* Pill shape */
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    font-weight: bold;
+    animation: slideUpFade 0.5s ease-out, fadeOut 0.5s ease-in 3.5s forwards;
+}
+
+/* Animations: Slide in from bottom, then fade out after 3.5s */
+@keyframes slideUpFade {
+    from { bottom: 0; opacity: 0; }
+    to { bottom: 30px; opacity: 1; }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; visibility: hidden; }
+}
