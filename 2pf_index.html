@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <title>Personal Record Vault</title>
+</head>
+<body>
+    <div class="container">
+        <h1>Personal Vault</h1>
+        <p>Your second brain, locally hosted.</p>
+        <div class="card-container">
+            <a href="/record" class="card">
+                <h3>Record Task</h3>
+                <p>Log what you did today.</p>
+            </a>
+            <a href="/query" class="card">
+                <h3>Query Page</h3>
+                <p>Search and summarize logs.</p>
+            </a>
+        </div>
+    </div>
+</body>
+</html>
