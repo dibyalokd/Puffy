@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <title>Record Task - Vault</title>
+</head>
+<body>
+    <div class="container">
+        <a href="/" style="color: #00adb5; text-decoration: none; font-size: 0.9rem;">← Back to Home</a>
+        <h1 style="margin-top: 20px;">What did you do?</h1>
+
+        <form action="/record" method="POST">
+            <textarea name="content" rows="10" placeholder="Type or paste your record in plain English here..." required></textarea>
+            <button type="submit">Vault It</button>
+        </form>
+    </div>
+
+    {% if success %}
+    <div class="toast-banner">
+        ✔ Record safely stored in the vault.
+    </div>
+    {% endif %}
+</body>
+</html>
