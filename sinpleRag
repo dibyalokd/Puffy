@@ -1,0 +1,70 @@
+import chromadb
+import uuid
+
+# --- Your Existing Infrastructure (Placeholders) ---
+def connectEmbedModel(text):
+    # Your on-prem embedding logic here
+    return [0.1] * 384 # Example vector
+
+def connectLLM(prompt):
+    # Your LLM connection logic here
+    return "This is a simulated response based on your local data."
+
+class AdaptiveRAG:
+    def __init__(self):
+        # Persistent storage ensures data stays after script ends
+        self.client = chromadb.PersistentClient(path="./my_local_db")
+        self.collection = self.client.get_or_create_collection(name="user_data")
+
+    def store_info(self, text):
+        """Cleans the 'update' prefix and stores the embedding"""
+        clean_text = text.replace("update", "", 1).strip()
+        vector = connectEmbedModel(clean_text)
+        
+        self.collection.add(
+            ids=[str(uuid.uuid4())],
+            embeddings=[vector],
+            documents=[clean_text]
+        )
+        print(f"✔️ System updated with new knowledge: '{clean_text[:30]}...'")
+
+    def query_info(self, user_query):
+        """Retrieves context and generates response via LLM"""
+        query_vector = connectEmbedModel(user_query)
+        
+        # Fetching the most relevant match
+        results = self.collection.query(
+            query_embeddings=[query_vector],
+            n_results=3
+        )
+        
+        # Flatten documents into a single context string
+        context = " ".join(results['documents'][0]) if results['documents'][0] else "No relevant info found."
+        
+        prompt = f"Context: {context}\n\nUser Question: {user_query}\nAnswer:"
+        return connectLLM(prompt)
+
+def main():
+    bot = AdaptiveRAG()
+    print("--- Local AI Memory Loaded ---")
+    print("Type 'update <your data>' to save info, or just type a question to query.")
+    print("Type 'exit' to close.")
+
+    while True:
+        user_input = input("\n> ").strip()
+        
+        if not user_input:
+            continue
+        
+        if user_input.lower() == 'exit':
+            break
+        
+        # Logical Switch: Update vs. Query
+        if user_input.lower().startswith("update"):
+            bot.store_info(user_input)
+        else:
+            response = bot.query_info(user_input)
+            print(f"🤖: {response}")
+
+if __name__ == "__main__":
+    main()
