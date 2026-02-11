@@ -1,0 +1,51 @@
+import requests
+import zipfile
+import os
+
+def get_xml_from_massive_zip(url, token, temp_zip="large_download.zip"):
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    print(f"Starting streaming download (3GB+)...")
+    
+    try:
+        # 1. Stream the download to disk
+        with requests.get(url, headers=headers, stream=True) as r:
+            r.raise_for_status()
+            with open(temp_zip, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192): 
+                    if chunk:
+                        f.write(chunk)
+        
+        print(f"Download complete. Analyzing zip structure...")
+
+        # 2. Open from disk (ZipFile is efficient at reading headers without loading the whole file)
+        with zipfile.ZipFile(temp_zip, 'r') as z:
+            # Find output.xml
+            xml_filename = next((f for f in z.namelist() if f.endswith("output.xml")), None)
+            
+            if not xml_filename:
+                print("Could not find output.xml inside the 3GB zip.")
+                return None
+            
+            print(f"Extracting {xml_filename}...")
+            with z.open(xml_filename) as xml_file:
+                content = xml_file.read().decode('utf-8')
+                return content
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return None
+    finally:
+        # 3. Cleanup: Remove the 3GB file after we get what we need
+        if os.path.exists(temp_zip):
+            os.remove(temp_zip)
+            print("Temporary zip cleared.")
+
+# --- Run it ---
+URL = "your_absolute_artifactory_url"
+TOKEN = "your_token"
+
+xml_output = get_xml_from_massive_zip(URL, TOKEN)
+
+if xml_output:
+    print("Successfully read output.xml from the 3GB archive!")
