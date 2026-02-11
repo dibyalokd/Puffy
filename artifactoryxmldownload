@@ -1,0 +1,46 @@
+import requests
+import zipfile
+import io
+
+def get_xml_from_artifactory_path(base_url, full_path, auth_token):
+    """
+    Downloads a zip from a known path and extracts the output.xml content.
+    """
+    # Ensure the URL is constructed correctly
+    # full_path should be 'repo-key/path/to/file.zip'
+    download_url = f"{base_url}/{full_path}"
+    
+    headers = {"Authorization": f"Bearer {auth_token}"}
+    
+    print(f"Fetching: {download_url}")
+    response = requests.get(download_url, headers=headers)
+    
+    if response.status_code != 200:
+        print(f"Failed to download. Status: {response.status_code}")
+        print(f"Reason: {response.text}")
+        return None
+
+    # Open the zip in memory
+    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        # Search for output.xml anywhere in the zip structure
+        xml_filename = next((f for f in z.namelist() if f.endswith("output.xml")), None)
+        
+        if not xml_filename:
+            print("Error: output.xml not found inside the zip file.")
+            return None
+        
+        print(f"Extracting: {xml_filename}")
+        with z.open(xml_filename) as xml_file:
+            return xml_file.read().decode("utf-8")
+
+# --- Configuration ---
+BASE_URL = "https://your-artifactory-instance.com/artifactory"
+# Example: "libs-release-local/com/app/1.0/app-1.0.zip"
+FILE_PATH = "your-repo/folder/subfolder/filename.zip"
+TOKEN = "your_access_token"
+
+xml_content = get_xml_from_artifactory_path(BASE_URL, FILE_PATH, TOKEN)
+
+if xml_content:
+    print("Successfully read output.xml!")
+    # print(xml_content) # Uncomment to see the full XML
