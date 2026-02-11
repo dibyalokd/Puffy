@@ -1,3 +1,64 @@
+
+import requests
+
+def get_latest_artifactory_zip(base_url, repo, folder_path, auth_token):
+    search_url = f"{base_url}/api/search/aql"
+    
+    # Cleaned up the AQL string - ensuring brackets and quotes are perfect
+    # The $match: "path/*" handles the recursion through subdirectories
+    query = (
+        f'items.find({{'
+        f'"repo": "{repo}",'
+        f'"path": {{"$match": "{folder_path}/*"}},'
+        f'"name": {{"$match": "*.zip"}}'
+        f'}}).sort({{"$desc": ["created"]}}).limit(1)'
+    )
+
+    headers = {
+        "Authorization": f"Bearer {auth_token}",
+        "Content-Type": "text/plain"
+    }
+
+    response = requests.post(search_url, data=query, headers=headers)
+
+    if response.status_code != 200:
+        print(f"Status Code: {response.status_code}")
+        print(f"Response Text: {response.text}") # This tells us the REAL error
+        return None
+
+    try:
+        results = response.json().get("results", [])
+        if not results:
+            print("Search successful, but no zip files found.")
+            return None
+
+        file_data = results[0]
+        # Build the final URL
+        full_url = f"{base_url}/{file_data['repo']}/{file_data['path']}/{file_data['name']}"
+        return full_url
+
+    except ValueError:
+        print("Failed to parse JSON. Raw response:")
+        print(response.text)
+        return None
+
+# --- Quick Test Config ---
+# Ensure BASE_URL does NOT end with a trailing slash
+BASE_URL = "https://your-artifactory-instance.com/artifactory"
+REPO = "your-repo"
+SEARCH_ROOT = "root/folder" # Do not add trailing slash here
+TOKEN = "your_token"
+
+url = get_latest_artifactory_zip(BASE_URL, REPO, SEARCH_ROOT, TOKEN)
+if url:
+    print(f"Success! Latest zip is at: {url}")
+
+
+
+
+///////////
+
+
 import requests
 import json
 
