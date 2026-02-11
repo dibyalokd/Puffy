@@ -1,0 +1,51 @@
+import requests
+import zipfile
+import io
+import xml.etree.ElementTree as ET
+
+def download_and_read_xml(download_url, auth_token, target_xml="output.xml"):
+    """
+    Downloads the zip in-memory, searches for target_xml in any subdirectory,
+    and returns the parsed content.
+    """
+    headers = {"Authorization": f"Bearer {auth_token}"}
+    
+    print(f"Downloading from: {download_url}...")
+    response = requests.get(download_url, headers=headers)
+    
+    if response.status_code != 200:
+        print(f"Failed to download zip. Status: {response.status_code}")
+        return None
+
+    # Load the zip content into memory
+    with zipfile.ZipFile(io.BytesIO(response.content)) as the_zip:
+        # Traverse all files in the zip to find output.xml (wherever it hides)
+        xml_path = None
+        for file_info in the_zip.infolist():
+            if file_info.filename.endswith(target_xml):
+                xml_path = file_info.filename
+                break
+        
+        if not xml_path:
+            print(f"Could not find {target_xml} inside the zip.")
+            return None
+        
+        print(f"Found {target_xml} at: {xml_path}")
+        
+        # Read the XML file content
+        with the_zip.open(xml_path) as xml_file:
+            xml_content = xml_file.read().decode('utf-8')
+            
+            # Optionally parse it right here
+            # root = ET.fromstring(xml_content)
+            return xml_content
+
+# --- Integration with your previous step ---
+# Assuming 'latest_url' is the URL you got from the AQL search
+TOKEN = "your_token"
+
+xml_data = download_and_read_xml(latest_url, TOKEN)
+
+if xml_data:
+    print("--- XML Content Preview ---")
+    print(xml_data[:500])  # Print first 500 characters
