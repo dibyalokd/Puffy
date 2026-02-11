@@ -1,3 +1,75 @@
+
+
+import requests
+import zipfile
+import io
+
+def download_and_extract_xml(base_url, repo_path, auth_token):
+    """
+    Downloads zip and extracts output.xml.
+    repo_path should look like: 'my-repo/folder/subfolder/file.zip'
+    """
+    # 1. Sanitize the URL
+    # Ensure base_url doesn't end with / and repo_path doesn't start with /
+    base_url = base_url.rstrip('/')
+    repo_path = repo_path.lstrip('/')
+    
+    download_url = f"{base_url}/{repo_path}"
+    
+    # 2. Setup Headers
+    headers = {
+        "Authorization": f"Bearer {auth_token}",
+        "User-Agent": "Mozilla/5.0"  # Some proxies block scripts but allow browser-like agents
+    }
+
+    print(f"--- Debugging ---")
+    print(f"Target URL: {download_url}")
+    
+    try:
+        response = requests.get(download_url, headers=headers, stream=True)
+        
+        # If you get a 404 here, the 'download_url' printed above is 
+        # exactly what you should compare against your browser URL.
+        if response.status_code != 200:
+            print(f"Error {response.status_code}: Resource not found.")
+            print(f"Artifactory Message: {response.text}")
+            return None
+
+        # 3. Extract in-memory
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            # Look for output.xml (case-insensitive search)
+            xml_filename = next((f for f in z.namelist() if f.lower().endswith("output.xml")), None)
+            
+            if not xml_filename:
+                print("Inside the zip, but couldn't find output.xml")
+                return None
+            
+            with z.open(xml_filename) as f:
+                return f.read().decode('utf-8')
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+# --- CONFIG ---
+# If your browser URL is: https://corp.artifactory.com/artifactory/my-repo/file.zip
+# Then BASE_URL = "https://corp.artifactory.com/artifactory"
+# And FILE_PATH = "my-repo/file.zip"
+
+BASE = "https://your-instance.com/artifactory"
+PATH = "repo-name/path/to/your/file.zip" 
+TOKEN = "your_token_here"
+
+xml_data = download_and_extract_xml(BASE, PATH, TOKEN)
+
+if xml_data:
+    print("Successfully extracted output.xml")
+    print(xml_data[:500])
+
+
+
+1111111
+
 import requests
 import zipfile
 import io
