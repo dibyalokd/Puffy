@@ -1,5 +1,51 @@
 import requests
 
+def diagnostic_search(base_url, repo, auth_token):
+    search_url = f"{base_url}/api/search/aql"
+    
+    # BROAD SEARCH: Just find the first 5 zip files anywhere in the repo
+    # This ignores your path entirely to show us what the paths SHOULD look like.
+    query = (
+        f'items.find({{'
+        f'"repo": "{repo}",'
+        f'"name": {{"$match": "*.zip"}}'
+        f'}}).sort({{"$desc": ["created"]}}).limit(5)'
+    )
+
+    headers = {"Authorization": f"Bearer {auth_token}", "Content-Type": "text/plain"}
+    
+    print("--- Debugging Artifactory Structure ---")
+    response = requests.post(search_url, data=query, headers=headers)
+    
+    if response.status_code != 200:
+        print(f"Error: {response.status_code}\n{response.text}")
+        return
+
+    results = response.json().get("results", [])
+    if not results:
+        print("CRITICAL: No zip files found even with a global repo search.")
+        print("Check: Is the Repo name 100% correct? Is the extension '.zip' (lowercase)?")
+        return
+
+    print(f"Found {len(results)} files. Match your input against these:")
+    for r in results:
+        print(f"File: {r['name']}")
+        print(f"  -> Use this for SEARCH_ROOT: '{r['path']}'")
+        print("-" * 30)
+
+# --- Config ---
+BASE_URL = "https://your-artifactory.com/artifactory"
+REPO = "your-repo"
+TOKEN = "your_token"
+
+diagnostic_search(BASE_URL, REPO, TOKEN)
+
+
+------
+
+
+import requests
+
 def get_latest_artifactory_zip(base_url, repo, folder_path, auth_token):
     search_url = f"{base_url}/api/search/aql"
     
