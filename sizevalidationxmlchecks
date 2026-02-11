@@ -1,0 +1,72 @@
+import requests
+import zipfile
+import os
+
+def get_xml_from_massive_zip(url, token, temp_zip="large_download.zip"):
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/zip, */*"
+    }
+    
+    print(f"Connecting to Artifactory...")
+    
+    try:
+        # 1. Start stream and check headers immediately
+        with requests.get(url, headers=headers, stream=True, timeout=30) as r:
+            # Check for HTTP errors (404, 401, 500)
+            r.raise_for_status()
+
+            # Check if the response is actually a zip (Artifactory should report this)
+            content_type = r.headers.get('Content-Type', '')
+            content_length = int(r.headers.get('Content-Length', 0))
+
+            print(f"Debug: Content-Type: {content_type}")
+            print(f"Debug: Expected Size: {content_length / (1024**3):.2f} GB")
+
+            if "html" in content_type:
+                print("ABORT: Artifactory returned an HTML page, not a ZIP.")
+                return None
+
+            # 2. Download in chunks
+            print(f"Streaming 3GB file to disk... (This will take a few minutes)")
+            downloaded = 0
+            with open(temp_zip, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=1024 * 1024): # 1MB chunks
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        # Print progress every 100MB
+                        if downloaded % (100 * 1024 * 1024) == 0:
+                            print(f"Downloaded: {downloaded / (1024**3):.2f} GB...")
+
+        print(f"Download Finished. Total: {downloaded / (1024**3):.2f} GB")
+
+        # 3. Extract the XML
+        if not zipfile.is_zipfile(temp_zip):
+            print("ERROR: The downloaded file is corrupt or not a valid ZIP.")
+            return None
+
+        with zipfile.ZipFile(temp_zip, 'r') as z:
+            xml_filename = next((f for f in z.namelist() if f.endswith("output.xml")), None)
+            if not xml_filename:
+                print("Error: output.xml not found inside the zip.")
+                return None
+            
+            with z.open(xml_filename) as xml_file:
+                return xml_file.read().decode('utf-8')
+
+    except Exception as e:
+        print(f"Error during execution: {e}")
+        return None
+    finally:
+        if os.path.exists(temp_zip):
+            os.remove(temp_zip)
+            print("Temporary file cleaned up.")
+
+# --- Run ---
+URL = "your_absolute_url"
+TOKEN = "your_token"
+
+xml_content = get_xml_from_massive_zip(URL, TOKEN)
+if xml_content:
+    print("Success! XML content retrieved.")
