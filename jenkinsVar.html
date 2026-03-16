@@ -10,6 +10,223 @@
       padding: 20px;
       color: #333;
     }
+    .email-wrapper {
+      max-width: 750px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    .email-header {
+      background-color: #1a1a2e;
+      padding: 24px 30px;
+      text-align: center;
+    }
+    .email-header h1 {
+      color: #ffffff;
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 1px;
+    }
+    .email-header p {
+      color: #a0a8c0;
+      margin: 6px 0 0;
+      font-size: 13px;
+    }
+    .email-body {
+      padding: 30px;
+    }
+    .meta-info {
+      background-color: #f0f4ff;
+      border-left: 4px solid #4a6cf7;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 24px;
+      font-size: 13px;
+      color: #444;
+    }
+    .meta-info span {
+      display: inline-block;
+      margin-right: 24px;
+    }
+    .meta-info strong {
+      color: #1a1a2e;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    thead tr {
+      background-color: #1a1a2e;
+      color: #ffffff;
+    }
+    thead th {
+      padding: 13px 16px;
+      text-align: left;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+    tbody tr {
+      border-bottom: 1px solid #e8ecf0;
+    }
+    tbody tr:nth-child(even) {
+      background-color: #f9fbff;
+    }
+    tbody td {
+      padding: 12px 16px;
+      color: #333;
+      vertical-align: middle;
+    }
+    .status-pill {
+      display: inline-block;
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .email-footer {
+      background-color: #f0f4ff;
+      text-align: center;
+      padding: 16px;
+      font-size: 12px;
+      color: #888;
+      border-top: 1px solid #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+
+    <div class="email-header">
+      <h1>🚀 Jenkins Build Notification</h1>
+      <p>Automated Deployment Status Report</p>
+    </div>
+
+    <div class="email-body">
+
+      <div class="meta-info">
+        <span><strong>Job:</strong> ${ENV, var="JOB_NAME"}</span>
+        <span><strong>Build #:</strong> ${ENV, var="BUILD_NUMBER"}</span>
+        <span><strong>Time:</strong> ${ENV, var="BUILD_TIMESTAMP"}</span>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>APP</th>
+            <th>ENV</th>
+            <th>Version</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- ROW 1 -->
+          <tr>
+            <td>${ENV, var="ROW1_APP"}</td>
+            <td>${ENV, var="ROW1_ENV"}</td>
+            <td>${ENV, var="ROW1_VERSION"}</td>
+            <td>
+              <span class="status-pill" style="${ENV, var="ROW1_STATUS_STYLE"}">
+                ${ENV, var="ROW1_STATUS"}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 2 -->
+          <tr>
+            <td>${ENV, var="ROW2_APP"}</td>
+            <td>${ENV, var="ROW2_ENV"}</td>
+            <td>${ENV, var="ROW2_VERSION"}</td>
+            <td>
+              <span class="status-pill" style="${ENV, var="ROW2_STATUS_STYLE"}">
+                ${ENV, var="ROW2_STATUS"}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 3 -->
+          <tr>
+            <td>${ENV, var="ROW3_APP"}</td>
+            <td>${ENV, var="ROW3_ENV"}</td>
+            <td>${ENV, var="ROW3_VERSION"}</td>
+            <td>
+              <span class="status-pill" style="${ENV, var="ROW3_STATUS_STYLE"}">
+                ${ENV, var="ROW3_STATUS"}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 4 -->
+          <tr>
+            <td>${ENV, var="ROW4_APP"}</td>
+            <td>${ENV, var="ROW4_ENV"}</td>
+            <td>${ENV, var="ROW4_VERSION"}</td>
+            <td>
+              <span class="status-pill" style="${ENV, var="ROW4_STATUS_STYLE"}">
+                ${ENV, var="ROW4_STATUS"}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 5 -->
+          <tr>
+            <td>${ENV, var="ROW5_APP"}</td>
+            <td>${ENV, var="ROW5_ENV"}</td>
+            <td>${ENV, var="ROW5_VERSION"}</td>
+            <td>
+              <span class="status-pill" style="${ENV, var="ROW5_STATUS_STYLE"}">
+                ${ENV, var="ROW5_STATUS"}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 6 -->
+          <tr>
+            <td>${ENV, var="ROW6_APP"}</td>
+            <td>${ENV, var="ROW6_ENV"}</td>
+            <td>${ENV, var="ROW6_VERSION"}</td>
+            <td>
+              <span class="status-pill" style="${ENV, var="ROW6_STATUS_STYLE"}">
+                ${ENV, var="ROW6_STATUS"}
+              </span>
+            </td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <div class="email-footer">
+      Automated email by Jenkins &nbsp;|&nbsp; Build #${ENV, var="BUILD_NUMBER"}
+    </div>
+
+  </div>
+</body>
+</html>
+
+
+
+------------
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 20px;
+      color: #333;
+    }
 
     .email-wrapper {
       max-width: 750px;
