@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 20px;
+      color: #333;
+    }
+
+    .email-wrapper {
+      max-width: 750px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+
+    .email-header {
+      background-color: #1a1a2e;
+      padding: 24px 30px;
+      text-align: center;
+    }
+
+    .email-header h1 {
+      color: #ffffff;
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 1px;
+    }
+
+    .email-header p {
+      color: #a0a8c0;
+      margin: 6px 0 0;
+      font-size: 13px;
+    }
+
+    .email-body {
+      padding: 30px;
+    }
+
+    .meta-info {
+      background-color: #f0f4ff;
+      border-left: 4px solid #4a6cf7;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 24px;
+      font-size: 13px;
+      color: #444;
+    }
+
+    .meta-info span {
+      display: inline-block;
+      margin-right: 24px;
+    }
+
+    .meta-info strong {
+      color: #1a1a2e;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    thead tr {
+      background-color: #1a1a2e;
+      color: #ffffff;
+    }
+
+    thead th {
+      padding: 13px 16px;
+      text-align: left;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #e8ecf0;
+      transition: background 0.2s;
+    }
+
+    tbody tr:nth-child(even) {
+      background-color: #f9fbff;
+    }
+
+    tbody tr:hover {
+      background-color: #eef2ff;
+    }
+
+    tbody td {
+      padding: 12px 16px;
+      color: #333;
+      vertical-align: middle;
+    }
+
+    /* ── Status Pills ── */
+    .status-pill {
+      display: inline-block;
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .status-passed {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+
+    .status-failed {
+      background-color: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+
+    .status-unknown {
+      background-color: #e2e3e5;
+      color: #383d41;
+      border: 1px solid #d6d8db;
+    }
+
+    .email-footer {
+      background-color: #f0f4ff;
+      text-align: center;
+      padding: 16px;
+      font-size: 12px;
+      color: #888;
+      border-top: 1px solid #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+
+    <!-- ═══ HEADER ═══ -->
+    <div class="email-header">
+      <h1>🚀 Jenkins Build Notification</h1>
+      <p>Automated Deployment Status Report</p>
+    </div>
+
+    <!-- ═══ BODY ═══ -->
+    <div class="email-body">
+
+      <!-- Build Meta Info -->
+      <div class="meta-info">
+        <span><strong>Job:</strong> ${JOB_NAME}</span>
+        <span><strong>Build #:</strong> ${BUILD_NUMBER}</span>
+        <span><strong>Triggered by:</strong> ${BUILD_USER}</span>
+        <span><strong>Time:</strong> ${BUILD_TIMESTAMP}</span>
+      </div>
+
+      <!-- ═══ MAIN TABLE ═══ -->
+      <table>
+        <thead>
+          <tr>
+            <th>APP</th>
+            <th>ENV</th>
+            <th>Version</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- ROW 1 -->
+          <tr>
+            <td>${ROW1_APP}</td>
+            <td>${ROW1_ENV}</td>
+            <td>${ROW1_VERSION}</td>
+            <td>
+              <span class="status-pill 
+                ${ROW1_STATUS == 'PASSED' ? 'status-passed' : ROW1_STATUS == 'FAILED' ? 'status-failed' : 'status-unknown'}">
+                ${ROW1_STATUS}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 2 -->
+          <tr>
+            <td>${ROW2_APP}</td>
+            <td>${ROW2_ENV}</td>
+            <td>${ROW2_VERSION}</td>
+            <td>
+              <span class="status-pill 
+                ${ROW2_STATUS == 'PASSED' ? 'status-passed' : ROW2_STATUS == 'FAILED' ? 'status-failed' : 'status-unknown'}">
+                ${ROW2_STATUS}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 3 -->
+          <tr>
+            <td>${ROW3_APP}</td>
+            <td>${ROW3_ENV}</td>
+            <td>${ROW3_VERSION}</td>
+            <td>
+              <span class="status-pill 
+                ${ROW3_STATUS == 'PASSED' ? 'status-passed' : ROW3_STATUS == 'FAILED' ? 'status-failed' : 'status-unknown'}">
+                ${ROW3_STATUS}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 4 -->
+          <tr>
+            <td>${ROW4_APP}</td>
+            <td>${ROW4_ENV}</td>
+            <td>${ROW4_VERSION}</td>
+            <td>
+              <span class="status-pill 
+                ${ROW4_STATUS == 'PASSED' ? 'status-passed' : ROW4_STATUS == 'FAILED' ? 'status-failed' : 'status-unknown'}">
+                ${ROW4_STATUS}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 5 -->
+          <tr>
+            <td>${ROW5_APP}</td>
+            <td>${ROW5_ENV}</td>
+            <td>${ROW5_VERSION}</td>
+            <td>
+              <span class="status-pill 
+                ${ROW5_STATUS == 'PASSED' ? 'status-passed' : ROW5_STATUS == 'FAILED' ? 'status-failed' : 'status-unknown'}">
+                ${ROW5_STATUS}
+              </span>
+            </td>
+          </tr>
+
+          <!-- ROW 6 -->
+          <tr>
+            <td>${ROW6_APP}</td>
+            <td>${ROW6_ENV}</td>
+            <td>${ROW6_VERSION}</td>
+            <td>
+              <span class="status-pill 
+                ${ROW6_STATUS == 'PASSED' ? 'status-passed' : ROW6_STATUS == 'FAILED' ? 'status-failed' : 'status-unknown'}">
+                ${ROW6_STATUS}
+              </span>
+            </td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ═══ FOOTER ═══ -->
+    <div class="email-footer">
+      This is an automated email generated by Jenkins. Please do not reply. &nbsp;|&nbsp; Build: #${BUILD_NUMBER}
+    </div>
+
+  </div>
+</body>
+</html>
