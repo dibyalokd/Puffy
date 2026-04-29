@@ -1,0 +1,65 @@
+Jenkins Slave
+  └── WebDriverManager detects Edge version at runtime
+        └── Queries Artifactory for matching msedgedriver
+              └── Downloads & caches locally → driver ready
+
+artifactory/
+  └── edge-drivers/
+        ├── 120/
+        │     └── msedgedriver.exe
+        ├── 121/
+        │     └── msedgedriver.exe
+        └── 122/
+              └── msedgedriver.exe
+
+<dependency>
+    <groupId>io.github.bonigarcia</groupId>
+    <artifactId>webdrivermanager</artifactId>
+    <version>5.9.1</version>
+</dependency>
+
+
+driver:
+  artifactory:
+    base-url: http://your-artifactory-host/artifactory/edge-drivers
+  cache-path: C:/driver-cache
+
+
+@Configuration
+public class DriverManagerConfig {
+
+    @Value("${driver.artifactory.base-url}")
+    private String artifactoryBaseUrl;
+
+    @Value("${driver.cache-path}")
+    private String cachePath;
+
+    @Bean
+    public WebDriverManager edgeDriverManager() {
+        WebDriverManager wdm = WebDriverManager.edgedriver();
+        wdm.driverRepositoryUrl(buildRepoUrl())
+           .cachePath(cachePath)
+           .setup();
+        return wdm;
+    }
+
+    private URL buildRepoUrl() {
+        try {
+            return new URL(artifactoryBaseUrl);
+        } catch (MalformedURLException e) {
+            throw new IllegalStateException("Invalid Artifactory URL configured", e);
+        }
+    }
+}
+
+----
+
+@Profile("edge")
+@Scope("prototype")
+@Bean(destroyMethod = "")
+public WebDriver edgeDriver(WebDriverManager edgeDriverManager) {
+    // WDM already ran setup — driver path is set
+    EdgeOptions options = new EdgeOptions();
+    options.addArguments("--no-sandbox", "--disable-dev-shm-usage");
+    return new EdgeDriver(options);
+}
