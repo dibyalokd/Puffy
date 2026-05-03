@@ -1,0 +1,205 @@
+"""
+Streamlit web UI for the personal assistant — futuristic theme.
+
+Run:
+    streamlit run app.py
+
+Loads style.css for the heavy visual lifting; this file stays focused on layout.
+All business logic lives in personal_assistant.py.
+"""
+
+from pathlib import Path
+
+import streamlit as st
+
+import personal_assistant as core
+
+
+# ---------- Page config ----------
+st.set_page_config(
+    page_title="Assistant",
+    page_icon="◇",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# ---------- Load custom CSS ----------
+def load_css(path: str):
+    css_file = Path(path)
+    if css_file.exists():
+        st.markdown(f"<style>{css_file.read_text()}</style>", unsafe_allow_html=True)
+
+
+load_css("style.css")
+
+
+# ---------- Cached resources ----------
+@st.cache_resource(show_spinner="Initialising neural link…")
+def get_store():
+    return core.TaskStore()
+
+
+store = get_store()
+
+
+# ---------- Helpers ----------
+def render_task(doc: str, meta: dict, task_id: str, done: bool = False):
+    """Render a single task entry with custom styling."""
+    sort_field = "completed_at" if done else "created_at"
+    when = (meta.get(sort_field, "") or meta.get("created_at", ""))[:10]
+    klass = "task-entry done" if done else "task-entry"
+    st.markdown(
+        f"""
+        <div class="{klass}">
+            <div class="task-text">{doc}</div>
+            <div class="task-meta">{when} · {task_id[:8]}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_task_list(documents, metadatas, ids, sort_key, done=False, limit=None):
+    items = sorted(
+        zip(documents, metadatas, ids),
+        key=lambda x: x[1].get(sort_key, "") or x[1].get("created_at", ""),
+        reverse=True,
+    )
+    if limit:
+        items = items[:limit]
+    for doc, meta, _id in items:
+        render_task(doc, meta, _id, done=done)
+
+
+def quick_action(label, query):
+    if st.button(label, use_container_width=True, key=f"qa_{label}"):
+        st.session_state.pending_input = query
+        st.rerun()
+
+
+# ---------- Sidebar ----------
+with st.sidebar:
+    st.markdown(
+        """
+        <div class="app-header">
+            <div>
+                <div class="app-title">◇ ASSISTANT</div>
+                <div class="app-subtitle">Local · Private · Persistent</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="status-pill"><span class="status-dot"></span>SYSTEM ONLINE</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    pending = store.get_all(where={"status": "pending"})
+    completed = store.get_all(where={"status": "completed"})
+    n_pending = len(pending["ids"])
+    n_completed = len(completed["ids"])
+
+    col1, col2 = st.columns(2)
+    col1.metric("PENDING", n_pending)
+    col2.metric("ARCHIVED", n_completed)
+
+    st.divider()
+
+    st.markdown("##### Quick Commands")
+    quick_action("◈  All pending tasks", "what are all my pending tasks")
+    quick_action("◇  All completed", "show me everything I have completed")
+    quick_action("◉  List everything", "list all of my tasks")
+
+    st.divider()
+
+    st.markdown("##### Pending Queue")
+    if n_pending == 0:
+        st.caption("// queue empty")
+    else:
+        render_task_list(
+            pending["documents"], pending["metadatas"], pending["ids"],
+            sort_key="created_at",
+        )
+
+    st.divider()
+
+    st.markdown("##### Recent Archive")
+    if n_completed == 0:
+        st.caption("// archive empty")
+    else:
+        render_task_list(
+            completed["documents"], completed["metadatas"], completed["ids"],
+            sort_key="completed_at", done=True, limit=10,
+        )
+
+    st.divider()
+
+    if st.button("⌫  Clear chat history", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+
+    with st.expander("System config"):
+        st.code(
+            f"chat   : {core.CHAT_MODEL}\n"
+            f"embed  : {core.EMBED_MODEL}\n"
+            f"server : {core.LM_STUDIO_BASE_URL}\n"
+            f"db     : {core.CHROMA_DIR}\n"
+            f"thresh : {core.DONE_MATCH_THRESHOLD}",
+            language="text",
+        )
+
+
+# ---------- Main chat panel ----------
+st.markdown(
+    '<div class="chat-heading">◇ COMMAND INTERFACE</div>',
+    unsafe_allow_html=True,
+)
+
+# Initialise chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = [{
+        "role": "assistant",
+        "content": (
+            "Neural link established. Log tasks with `todo: ...`, complete them with "
+            "`done: ...`, or just ask me anything about your task history."
+        ),
+    }]
+
+# Render history
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# Determine input source
+prompt = None
+if st.session_state.get("pending_input"):
+    prompt = st.session_state.pop("pending_input")
+
+user_input = st.chat_input("> todo: ... | done: ... | or ask anything")
+if user_input:
+    prompt = user_input
+
+# Process input
+if prompt:
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Processing…"):
+            try:
+                response = core.route(prompt, store)
+            except Exception as e:
+                response = f"⚠ Error: `{e}`"
+        st.markdown(response or "_(empty input)_")
+
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": response or "_(empty input)_",
+    })
+    st.rerun()
