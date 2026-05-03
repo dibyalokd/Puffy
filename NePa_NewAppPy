@@ -1,0 +1,206 @@
+// =============================================================
+//  Personal Assistant — Flask UI client logic
+// =============================================================
+
+// ---------- Tiny markdown renderer ----------
+// The backend returns markdown (bullets, **bold**, `code`, ~~strike~~, line breaks).
+// No external library — small inline implementation, escapes HTML first.
+
+function escapeHtml(s) {
+    return s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function renderMarkdown(md) {
+    let s = escapeHtml(md);
+
+    // Code blocks ```...```
+    s = s.replace(/```([\s\S]*?)```/g, (_, code) =>
+        `<pre><code>${code}</code></pre>`
+    );
+
+    // Inline `code`
+    s = s.replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`);
+
+    // Bold **text**
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+    // Italic *text* (after bold so we don't catch leftover stars)
+    s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+    // Strikethrough ~~text~~
+    s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+
+    // Bullet lists — group consecutive "- " lines
+    const lines = s.split("\n");
+    const out = [];
+    let inList = false;
+    for (const line of lines) {
+        const m = line.match(/^- (.*)$/);
+        if (m) {
+            if (!inList) { out.push("<ul>"); inList = true; }
+            out.push(`<li>${m[1]}</li>`);
+        } else {
+            if (inList) { out.push("</ul>"); inList = false; }
+            out.push(line);
+        }
+    }
+    if (inList) out.push("</ul>");
+    s = out.join("\n");
+
+    // Paragraphs from double newlines, single newlines as <br>
+    s = s
+        .split(/\n{2,}/)
+        .map(block => {
+            if (block.trim().startsWith("<")) return block;          // already HTML
+            return "<p>" + block.replace(/\n/g, "<br>") + "</p>";
+        })
+        .join("\n");
+
+    return s;
+}
+
+// ---------- DOM refs ----------
+const chatHistory   = document.getElementById("chat-history");
+const chatForm      = document.getElementById("chat-form");
+const chatInput     = document.getElementById("chat-input");
+const sendBtn       = document.getElementById("send-btn");
+const sidebar       = document.getElementById("sidebar");
+const sidebarToggle = document.getElementById("sidebar-toggle");
+const sidebarExpand = document.getElementById("sidebar-expand");
+const clearChatBtn  = document.getElementById("clear-chat");
+const pendingList   = document.getElementById("pending-list");
+const completedList = document.getElementById("completed-list");
+const metricPending = document.getElementById("metric-pending");
+const metricDone    = document.getElementById("metric-completed");
+
+// ---------- Chat rendering ----------
+function appendMessage(role, content) {
+    const msg = document.createElement("div");
+    msg.className = `message ${role}`;
+    msg.innerHTML = `
+        <div class="avatar">${role === "user" ? "·" : "◇"}</div>
+        <div class="bubble">${renderMarkdown(content)}</div>
+    `;
+    chatHistory.appendChild(msg);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+    return msg;
+}
+
+function appendTyping() {
+    const msg = document.createElement("div");
+    msg.className = "message assistant";
+    msg.id = "typing-indicator";
+    msg.innerHTML = `
+        <div class="avatar">◇</div>
+        <div class="bubble">
+            <div class="typing"><span></span><span></span><span></span></div>
+        </div>
+    `;
+    chatHistory.appendChild(msg);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+function removeTyping() {
+    const t = document.getElementById("typing-indicator");
+    if (t) t.remove();
+}
+
+// ---------- Sidebar rendering ----------
+function renderTaskList(container, tasks, done) {
+    if (!tasks || tasks.length === 0) {
+        container.innerHTML = `<div class="caption">// ${done ? "archive" : "queue"} empty</div>`;
+        return;
+    }
+    container.innerHTML = tasks.map(t => {
+        const dateField = done ? t.completed_at : t.created_at;
+        const date = (dateField || "").slice(0, 10);
+        const klass = done ? "task-entry done" : "task-entry";
+        return `
+            <div class="${klass}">
+                <div class="task-text">${escapeHtml(t.text)}</div>
+                <div class="task-meta">${date} · ${t.id.slice(0, 8)}</div>
+            </div>
+        `;
+    }).join("");
+}
+
+function applySidebarState(state) {
+    metricPending.textContent = state.pending_count;
+    metricDone.textContent    = state.completed_count;
+    renderTaskList(pendingList,   state.pending,          false);
+    renderTaskList(completedList, state.recent_completed, true);
+}
+
+async function refreshSidebar() {
+    try {
+        const r = await fetch("/api/state");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const state = await r.json();
+        applySidebarState(state);
+    } catch (e) {
+        console.error("sidebar refresh failed:", e);
+    }
+}
+
+// ---------- Send message ----------
+async function sendMessage(text) {
+    if (!text || !text.trim()) return;
+
+    appendMessage("user", text);
+    chatInput.value = "";
+    sendBtn.disabled = true;
+    appendTyping();
+
+    try {
+        const r = await fetch("/api/message", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ text }),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        removeTyping();
+        appendMessage("assistant", data.response);
+        if (data.state) applySidebarState(data.state);
+    } catch (e) {
+        removeTyping();
+        appendMessage("assistant", `⚠ Error: \`${e.message}\``);
+    } finally {
+        sendBtn.disabled = false;
+        chatInput.focus();
+    }
+}
+
+// ---------- Wire up events ----------
+chatForm.addEventListener("submit", e => {
+    e.preventDefault();
+    sendMessage(chatInput.value);
+});
+
+document.querySelectorAll(".quick-btn[data-q]").forEach(btn => {
+    btn.addEventListener("click", () => sendMessage(btn.dataset.q));
+});
+
+clearChatBtn.addEventListener("click", () => {
+    // Clear visible history but keep the welcome message
+    chatHistory.innerHTML = `
+        <div class="message assistant">
+            <div class="avatar">◇</div>
+            <div class="bubble">
+                Chat cleared. Continue with <code>todo: ...</code>,
+                <code>done: ...</code>, or any question.
+            </div>
+        </div>
+    `;
+});
+
+sidebarToggle.addEventListener("click", () => sidebar.classList.add("collapsed"));
+sidebarExpand.addEventListener("click", () => sidebar.classList.remove("collapsed"));
+
+// ---------- Boot ----------
+refreshSidebar();
