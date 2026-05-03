@@ -1,0 +1,119 @@
+"""
+Flask web UI for the personal assistant.
+
+Run:
+    pip install flask
+    python flask_app.py
+
+Then open http://127.0.0.1:5000 in your browser.
+
+This file is purely presentation: every action delegates to
+personal_assistant.py. The core logic, connectLLM, connectEmbedLLM,
+and TaskStore are untouched.
+"""
+
+from flask import Flask, render_template, request, jsonify
+
+import personal_assistant as core
+
+
+app = Flask(__name__)
+
+# Single shared TaskStore for the lifetime of the process.
+# (Single-user app, single-process Flask dev server — safe.)
+store = core.TaskStore()
+
+
+# ============================================================
+#  Helpers
+# ============================================================
+
+def serialize_tasks(documents, metadatas, ids, sort_key):
+    """Sort tasks by date desc and return JSON-serializable list."""
+    items = sorted(
+        zip(documents, metadatas, ids),
+        key=lambda x: x[1].get(sort_key, "") or x[1].get("created_at", ""),
+        reverse=True,
+    )
+    return [
+        {
+            "id": _id,
+            "text": doc,
+            "status": meta.get("status", ""),
+            "created_at": meta.get("created_at", ""),
+            "completed_at": meta.get("completed_at", ""),
+        }
+        for doc, meta, _id in items
+    ]
+
+
+def get_sidebar_state():
+    """Snapshot of pending + recently-completed tasks for the sidebar."""
+    pending = store.get_all(where={"status": "pending"})
+    completed = store.get_all(where={"status": "completed"})
+
+    pending_list = serialize_tasks(
+        pending["documents"], pending["metadatas"], pending["ids"],
+        sort_key="created_at",
+    )
+    completed_list = serialize_tasks(
+        completed["documents"], completed["metadatas"], completed["ids"],
+        sort_key="completed_at",
+    )[:10]
+
+    return {
+        "pending_count": len(pending["ids"]),
+        "completed_count": len(completed["ids"]),
+        "pending": pending_list,
+        "recent_completed": completed_list,
+    }
+
+
+# ============================================================
+#  Routes
+# ============================================================
+
+@app.route("/")
+def index():
+    return render_template("index.html", config={
+        "chat_model":  core.CHAT_MODEL,
+        "embed_model": core.EMBED_MODEL,
+        "server":      core.LM_STUDIO_BASE_URL,
+        "db_dir":      core.CHROMA_DIR,
+        "threshold":   core.DONE_MATCH_THRESHOLD,
+    })
+
+
+@app.route("/api/state")
+def api_state():
+    """Return current sidebar state (counts + lists)."""
+    return jsonify(get_sidebar_state())
+
+
+@app.route("/api/message", methods=["POST"])
+def api_message():
+    """Process a user message via the same router used by the CLI."""
+    data = request.get_json(force=True) or {}
+    line = (data.get("text") or "").strip()
+    if not line:
+        return jsonify({"response": "_(empty input)_", "state": get_sidebar_state()})
+
+    try:
+        response = core.route(line, store)
+    except Exception as e:
+        response = f"⚠ Error: `{e}`"
+
+    return jsonify({
+        "response": response or "_(empty input)_",
+        "state":    get_sidebar_state(),
+    })
+
+
+# ============================================================
+#  Entry point
+# ============================================================
+
+if __name__ == "__main__":
+    # 127.0.0.1 only — no LAN exposure.
+    # debug=False keeps the reloader from doubling up on the ChromaDB connection.
+    app.run(host="127.0.0.1", port=5000, debug=False)
