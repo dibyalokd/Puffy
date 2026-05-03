@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>◇ Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="layout">
+
+    <!-- ============================================================ -->
+    <!-- Sidebar                                                       -->
+    <!-- ============================================================ -->
+    <aside class="sidebar" id="sidebar">
+
+        <button class="sidebar-toggle" id="sidebar-toggle" title="Collapse sidebar">‹</button>
+
+        <div class="sidebar-inner">
+            <div class="app-header">
+                <div class="app-title">◇ ASSISTANT</div>
+                <div class="app-subtitle">Local · Private · Persistent</div>
+            </div>
+
+            <div class="status-pill">
+                <span class="status-dot"></span>SYSTEM ONLINE
+            </div>
+
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-label">PENDING</div>
+                    <div class="metric-value" id="metric-pending">0</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">ARCHIVED</div>
+                    <div class="metric-value" id="metric-completed">0</div>
+                </div>
+            </div>
+
+            <hr>
+
+            <h5>Quick Commands</h5>
+            <button class="quick-btn" data-q="what are all my pending tasks">◈  All pending tasks</button>
+            <button class="quick-btn" data-q="show me everything I have completed">◇  All completed</button>
+            <button class="quick-btn" data-q="list all of my tasks">◉  List everything</button>
+
+            <hr>
+
+            <h5>Pending Queue</h5>
+            <div id="pending-list">
+                <div class="caption">// loading…</div>
+            </div>
+
+            <hr>
+
+            <h5>Recent Archive</h5>
+            <div id="completed-list">
+                <div class="caption">// loading…</div>
+            </div>
+
+            <hr>
+
+            <button class="quick-btn" id="clear-chat">⌫  Clear chat history</button>
+
+            <details class="config">
+                <summary>System config</summary>
+                <pre>chat   : {{ config.chat_model }}
+embed  : {{ config.embed_model }}
+server : {{ config.server }}
+db     : {{ config.db_dir }}
+thresh : {{ config.threshold }}</pre>
+            </details>
+        </div>
+    </aside>
+
+    <!-- expand button: visible only when sidebar is collapsed -->
+    <button class="sidebar-expand" id="sidebar-expand" title="Expand sidebar">›</button>
+
+    <!-- ============================================================ -->
+    <!-- Main chat panel                                               -->
+    <!-- ============================================================ -->
+    <main class="chat-panel">
+        <div class="chat-heading">◇ COMMAND INTERFACE</div>
+
+        <div class="chat-history" id="chat-history">
+            <div class="message assistant">
+                <div class="avatar">◇</div>
+                <div class="bubble">
+                    Neural link established. Log tasks with <code>todo: ...</code>,
+                    complete them with <code>done: ...</code>, or just ask me anything
+                    about your task history.
+                </div>
+            </div>
+        </div>
+
+        <form class="chat-input-wrap" id="chat-form" autocomplete="off">
+            <input
+                type="text"
+                id="chat-input"
+                placeholder="> todo: ... | done: ... | or ask anything"
+                autofocus>
+            <button type="submit" id="send-btn">↵</button>
+        </form>
+    </main>
+
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
