@@ -1,0 +1,22 @@
+import httpx
+from openai import OpenAI
+
+# Custom httpx client with proxy + SSL verify=False
+http_client = httpx.Client(
+    proxies={
+        "http://": "http://your-proxy:port",
+        "https://": "http://your-proxy:port",
+    },
+    verify=False  # Disable SSL verification
+)
+
+client = OpenAI(
+    api_key="your-api-key",
+    http_client=http_client  # 👈 inject here
+)
+
+# Now use normally
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
