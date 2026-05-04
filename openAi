@@ -1,0 +1,35 @@
+import httpx
+from openai import OpenAI
+
+PROXY_URL = "http://your-proxy-host:8080"     # or with auth: http://user:pass@host:8080
+
+def _make_client():
+    """Build an OpenAI client that routes through the corporate proxy."""
+    http_client = httpx.Client(
+        proxy=PROXY_URL,
+        # if the proxy uses a self-signed cert, point to the CA bundle:
+        # verify="/path/to/corporate-ca-bundle.pem",
+        timeout=60.0,
+    )
+    return OpenAI(
+        base_url=LM_STUDIO_BASE_URL,
+        api_key=LM_STUDIO_API_KEY,
+        http_client=http_client,
+    )
+
+def connectLLM(prompt: str) -> str:
+    client = _make_client()
+    resp = client.chat.completions.create(
+        model=CHAT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=CHAT_TEMPERATURE,
+    )
+    return resp.choices[0].message.content
+
+def connectEmbedLLM(text: str) -> list:
+    client = _make_client()
+    resp = client.embeddings.create(model=EMBED_MODEL, input=[text])
+    vec = resp.data[0].embedding
+    while isinstance(vec, list) and len(vec) > 0 and isinstance(vec[0], list):
+        vec = vec[0]
+    return vec
