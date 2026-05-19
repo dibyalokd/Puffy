@@ -1,0 +1,4 @@
+Yesterday Snehasish and Alan were on call investigating the differences that were seen between the reversal impact from Feed Code amount and Deal Monitoring amout
+The rates on the feed code are updated on every 15 minutes interval and the reversal deal uses the latest rates when reversed while we were using the booking rates for reversal 
+Also the rates Alan was using are from the Deal usage logs from the server and that is close to the reversal amount being shown
+We have done that on AB column
