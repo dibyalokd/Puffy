@@ -1,0 +1,1550 @@
+PA 
+"""
+Personal Assistant — task tracker with RAG-backed query.
+Stack: LM Studio (chat + embeddings) + ChromaDB (persistent local store).
+
+Install:
+    pip install chromadb openai streamlit
+
+Setup (LM Studio):
+    1. Load a chat model (e.g. Qwen2.5-7B-Instruct)
+    2. Load an embedding model (e.g. nomic-embed-text-v1.5)
+    3. Start the local server on port 1234 with both models served
+    4. Update CHAT_MODEL and EMBED_MODEL below to match the model identifiers
+       shown in LM Studio (Developer tab → loaded models)
+
+Run:
+    python personal_assistant.py     # CLI mode
+    streamlit run app.py             # Web UI
+
+Public API:
+    connectLLM(prompt: str) -> str
+    connectEmbedLLM(text: str) -> list[float]
+"""
+
+import json
+import uuid
+from datetime import datetime
+
+import chromadb
+from chromadb import Documents, EmbeddingFunction, Embeddings
+from openai import OpenAI
+
+
+# ---------- Configuration ----------
+LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
+LM_STUDIO_API_KEY = "lm-studio"          # placeholder; LM Studio doesn't validate
+
+CHAT_MODEL  = "qwen2.5-7b-instruct"      # <-- replace with your loaded chat model id
+EMBED_MODEL = "nomic-embed-text-v1.5"    # <-- replace with your loaded embed model id
+
+CHROMA_DIR      = "./chroma_db"
+COLLECTION_NAME = "tasks"
+
+# Cosine distance below which we consider a "done:" line to refer to an existing todo.
+DONE_MATCH_THRESHOLD = 0.35
+
+# Default temperature for chat completions
+CHAT_TEMPERATURE = 0.2
+
+
+# ============================================================
+#  LLM connections — the ONLY place provider details live
+# ============================================================
+
+def connectLLM(prompt: str) -> str:
+    """Send a prompt string to the chat LLM and return the response text.
+
+    The prompt may contain system-level instructions, context, and the user's
+    question all together — caller is responsible for formatting. Internally
+    wrapped as a single user message.
+    """
+    client = OpenAI(base_url=LM_STUDIO_BASE_URL, api_key=LM_STUDIO_API_KEY)
+    resp = client.chat.completions.create(
+        model=CHAT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=CHAT_TEMPERATURE,
+    )
+    return resp.choices[0].message.content
+
+
+def connectEmbedLLM(text: str) -> list:
+    """Embed a single text string and return the vector (list of floats).
+
+    Defensively unwraps the response: some LM Studio + embedding-model combos
+    return [[floats]] instead of [floats] for resp.data[0].embedding. We
+    flatten until the first element is a number, so the caller always gets a
+    flat list[float].
+    """
+    client = OpenAI(base_url=LM_STUDIO_BASE_URL, api_key=LM_STUDIO_API_KEY)
+    resp = client.embeddings.create(model=EMBED_MODEL, input=[text])
+    vec = resp.data[0].embedding
+
+    # Flatten any extra nesting: [[floats]] -> [floats], [[[floats]]] -> [floats], etc.
+    while isinstance(vec, list) and len(vec) > 0 and isinstance(vec[0], list):
+        vec = vec[0]
+
+    return vec
+
+
+# ============================================================
+#  ChromaDB integration
+# ============================================================
+
+class LMStudioEmbeddingFunction(EmbeddingFunction[Documents]):
+    """Adapter so ChromaDB calls connectEmbedLLM once per text on add/query.
+
+    Note: the parameter MUST be named `input` and the signature must match
+    Chroma's EmbeddingFunction protocol exactly. Chroma introspects this
+    signature; a mismatch causes infinite recursion in some Chroma versions.
+    """
+
+    def __call__(self, input: Documents) -> Embeddings:
+        # ChromaDB hands us a list of strings — embed each individually.
+        return [connectEmbedLLM(text) for text in input]
+
+
+class TaskStore:
+    """Two retrieval modes:
+       - get_all(where=...)   — returns ALL matches, no K limit (for 'list' queries)
+       - semantic_search(...) — top-K by similarity (for fuzzy lookups)
+    """
+
+    def __init__(self, persist_dir=CHROMA_DIR, collection=COLLECTION_NAME):
+        self.client = chromadb.PersistentClient(path=persist_dir)
+        self.collection = self.client.get_or_create_collection(
+            name=collection,
+            embedding_function=LMStudioEmbeddingFunction(),
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    def add_task(self, text: str, status: str = "pending",
+                 due_at: str = "", topic: str = "") -> str:
+        task_id = str(uuid.uuid4())
+        now = datetime.now().isoformat(timespec="seconds")
+        self.collection.add(
+            ids=[task_id],
+            documents=[text],
+            metadatas=[{
+                "status": status,
+                "created_at": now,
+                "completed_at": now if status == "completed" else "",
+                # Reminder fields — empty strings when not a reminder.
+                # Chroma metadata doesn't support None, so "" = unset.
+                "due_at":   due_at,
+                "topic":    topic,
+                # reminder_fired: "yes" once the browser confirms it fired the
+                # notification, so we don't re-fire on page reload.
+                "reminder_fired": "",
+            }],
+        )
+        return task_id
+
+    def mark_reminder_fired(self, task_id: str) -> bool:
+        existing = self.collection.get(ids=[task_id])
+        if not existing["ids"]:
+            return False
+        meta = existing["metadatas"][0]
+        meta["reminder_fired"] = "yes"
+        self.collection.update(ids=[task_id], metadatas=[meta])
+        return True
+
+    def get_pending_reminders(self):
+        """Return all tasks that have a due_at set and haven't fired yet.
+
+        Filtered by status=pending so completed reminders don't re-fire.
+        """
+        result = self.collection.get(where={"status": "pending"})
+        out = []
+        for _id, doc, meta in zip(result["ids"], result["documents"], result["metadatas"]):
+            if meta.get("due_at") and not meta.get("reminder_fired"):
+                out.append({
+                    "id":     _id,
+                    "text":   doc,
+                    "due_at": meta["due_at"],
+                    "topic":  meta.get("topic", ""),
+                })
+        return out
+
+    def find_pending_match(self, text: str, n_results: int = 3):
+        try:
+            r = self.collection.query(
+                query_texts=[text], n_results=n_results,
+                where={"status": "pending"},
+            )
+        except Exception:
+            return None
+        if not r["ids"] or not r["ids"][0]:
+            return None
+        return {
+            "id":       r["ids"][0][0],
+            "document": r["documents"][0][0],
+            "distance": r["distances"][0][0],
+            "metadata": r["metadatas"][0][0],
+        }
+
+    def mark_completed(self, task_id: str) -> bool:
+        existing = self.collection.get(ids=[task_id])
+        if not existing["ids"]:
+            return False
+        meta = existing["metadatas"][0]
+        meta["status"] = "completed"
+        meta["completed_at"] = datetime.now().isoformat(timespec="seconds")
+        self.collection.update(ids=[task_id], metadatas=[meta])
+        return True
+
+    def get_all(self, where=None):
+        """Return ALL matching tasks — no top-K cap. Use for 'list' queries."""
+        return self.collection.get(where=where)
+
+    def semantic_search(self, query: str, where=None, n_results: int = 50):
+        return self.collection.query(
+            query_texts=[query], n_results=n_results, where=where,
+        )
+
+
+# ============================================================
+#  Handlers — return strings (UI-agnostic)
+# ============================================================
+
+_REMINDER_PARSE_TEMPLATE = """You parse reminder requests into JSON. Output ONLY JSON, no prose, no markdown fences.
+
+The current date and time is: {now}
+
+The user is creating a reminder. Extract two fields:
+- "due_at": ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SS) for when the reminder should fire
+- "topic": short description of what the reminder is about
+
+Rules:
+- Resolve relative times against the current date/time given above.
+- "tomorrow" = next calendar day. "tonight" = today evening (~20:00 if unspecified).
+- If only a time is given (no date), assume the next occurrence of that time.
+- "6pm" = 18:00. "morning" = 09:00. "noon" = 12:00. "midnight" = 00:00 of next day.
+- Strip filler words like "remind me", "by", "regarding", "to", "about" from the topic.
+- If the input is ambiguous or no time can be parsed, return: {{"due_at": null, "topic": null}}
+
+Examples (assuming current time is 2026-05-25T14:00:00):
+"remind me by tomorrow 6pm regarding submit tax forms"
+-> {{"due_at": "2026-05-26T18:00:00", "topic": "submit tax forms"}}
+
+"remind me by 2026-06-01 09:30 to call dentist"
+-> {{"due_at": "2026-06-01T09:30:00", "topic": "call dentist"}}
+
+"remind me in 2 hours about the meeting"
+-> {{"due_at": "2026-05-25T16:00:00", "topic": "the meeting"}}
+
+"remind me friday morning regarding the report"
+-> {{"due_at": "2026-05-29T09:00:00", "topic": "the report"}}
+
+USER INPUT:
+{text}
+
+JSON:"""
+
+
+def parse_reminder(text: str) -> dict:
+    """Try to parse a reminder string into {due_at, topic}.
+
+    Returns {"due_at": iso_string, "topic": str} on success,
+    or {"due_at": None, "topic": None} on failure.
+    """
+    now_str = datetime.now().isoformat(timespec="seconds")
+    prompt = _REMINDER_PARSE_TEMPLATE.format(now=now_str, text=text)
+    raw = connectLLM(prompt).strip()
+
+    # Strip markdown fences if present
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+
+    try:
+        parsed = json.loads(raw)
+        return {
+            "due_at": parsed.get("due_at"),
+            "topic":  parsed.get("topic"),
+        }
+    except json.JSONDecodeError:
+        return {"due_at": None, "topic": None}
+
+
+def _looks_like_reminder(text: str) -> bool:
+    """Quick keyword check to decide whether to invoke the LLM parser.
+
+    Avoids an LLM call for every todo — only those that look like reminders.
+    """
+    t = text.lower()
+    return "remind" in t and any(k in t for k in (
+        "by ", "at ", "on ", "in ", "tomorrow", "tonight",
+        "today", "morning", "evening", "noon", "midnight",
+        "am", "pm", ":",
+    ))
+
+
+def handle_todo(text: str, store: TaskStore) -> str:
+    # If the todo looks like a reminder, try to parse it.
+    if _looks_like_reminder(text):
+        parsed = parse_reminder(text)
+        if parsed["due_at"] and parsed["topic"]:
+            # Validate the parsed timestamp is in the future
+            try:
+                due = datetime.fromisoformat(parsed["due_at"])
+                if due > datetime.now():
+                    task_id = store.add_task(
+                        text=parsed["topic"],
+                        status="pending",
+                        due_at=parsed["due_at"],
+                        topic=parsed["topic"],
+                    )
+                    due_pretty = due.strftime("%a %d %b %Y at %H:%M")
+                    return (
+                        f"⏰ Reminder set: **{parsed['topic']}**  \n"
+                        f"Will fire at **{due_pretty}**  \n"
+                        f"`{task_id[:8]}`"
+                    )
+                else:
+                    return (
+                        f"⚠ That time is already in the past ({parsed['due_at']}). "
+                        f"Try again with a future time."
+                    )
+            except (ValueError, TypeError):
+                # Fall through to plain todo if timestamp invalid
+                pass
+
+    # Plain todo path
+    task_id = store.add_task(text, "pending")
+    return f"📝 Logged as **pending**: {text}  \n`{task_id[:8]}`"
+
+
+def handle_done(text: str, store: TaskStore) -> str:
+    match = store.find_pending_match(text)
+    if match and match["distance"] < DONE_MATCH_THRESHOLD:
+        store.mark_completed(match["id"])
+        return (
+            f"✅ Marked complete: {match['document']}  \n"
+            f"`{match['id'][:8]}` · matched from \"{text}\" "
+            f"(distance {match['distance']:.3f})"
+        )
+    task_id = store.add_task(text, "completed")
+    if match:
+        return (
+            f"✅ Logged as completed: {text}  \n"
+            f"`{task_id[:8]}` · closest pending was \"{match['document']}\" "
+            f"(distance {match['distance']:.3f}, above threshold)"
+        )
+    return f"✅ Logged as completed: {text}  \n`{task_id[:8]}` (no prior todo)"
+
+
+# Single-string prompt template for the query planner.
+# System instructions and user query are folded together with clear delimiters.
+_PLANNER_PROMPT_TEMPLATE = """You convert user queries about their personal task list into JSON retrieval plans.
+Output ONLY JSON, no prose, no markdown fences.
+
+Schema:
+{{
+  "query_type": "list" | "search",
+  "status": "pending" | "completed" | null,
+  "semantic_query": string | null
+}}
+
+Rules:
+- "list" = return ALL matching tasks. Use for "what are my pending tasks", "show all completed", "list everything about X".
+- "search" = top semantically similar. Use for vague lookups like "did I have something about...", "anything on Y?".
+- status: filter by status, null if user didn't specify.
+- semantic_query: short phrase to embed for ranking/filtering by topic. null if no topic mentioned.
+
+Examples:
+"what are my pending tasks" -> {{"query_type":"list","status":"pending","semantic_query":null}}
+"show me everything I completed" -> {{"query_type":"list","status":"completed","semantic_query":null}}
+"all my pending work tasks" -> {{"query_type":"list","status":"pending","semantic_query":"work"}}
+"did I have something about taxes" -> {{"query_type":"search","status":null,"semantic_query":"taxes"}}
+"list all my tasks" -> {{"query_type":"list","status":null,"semantic_query":null}}
+
+USER QUERY:
+{query}
+
+JSON:"""
+
+
+def plan_query(query: str) -> dict:
+    """Convert a natural-language query into a structured retrieval plan."""
+    prompt = _PLANNER_PROMPT_TEMPLATE.format(query=query)
+    raw = connectLLM(prompt).strip()
+
+    # Strip markdown fences if model wrapped them
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+
+    try:
+        plan = json.loads(raw)
+        plan.setdefault("query_type", "list")
+        plan.setdefault("status", None)
+        plan.setdefault("semantic_query", None)
+        return plan
+    except json.JSONDecodeError:
+        return {"query_type": "list", "status": None, "semantic_query": None}
+
+
+def handle_query(query: str, store: TaskStore) -> str:
+    plan = plan_query(query)
+    where = {"status": plan["status"]} if plan.get("status") else None
+
+    if plan["query_type"] == "list":
+        # CRITICAL: get() returns EVERY matching row — no top-K cap.
+        result = store.get_all(where=where)
+        tasks = list(zip(result["ids"], result["documents"], result["metadatas"]))
+
+        if plan.get("semantic_query") and tasks:
+            sem = store.semantic_search(
+                plan["semantic_query"], where=where, n_results=len(tasks)
+            )
+            distances = dict(zip(sem["ids"][0], sem["distances"][0]))
+            tasks.sort(key=lambda t: distances.get(t[0], float("inf")))
+    else:
+        result = store.semantic_search(
+            plan["semantic_query"] or query, where=where, n_results=50
+        )
+        tasks = list(zip(result["ids"][0], result["documents"][0], result["metadatas"][0]))
+
+    if not tasks:
+        return "_No matching tasks found._"
+
+    # Format the task list as context for the answering LLM
+    lines = []
+    for _id, doc, meta in tasks:
+        status    = meta.get("status", "?")
+        created   = meta.get("created_at", "")[:16].replace("T", " ")
+        completed = meta.get("completed_at", "")
+        comp_str  = f", completed {completed[:16].replace('T', ' ')}" if completed else ""
+        lines.append(f"- [{status}] {doc} (created {created}{comp_str})")
+    context = "\n".join(lines)
+
+    answer_prompt = (
+        "You are a personal assistant answering questions about the user's tasks. "
+        "Use ONLY the task list provided. Be concise. "
+        "If the user asked for a list, present EVERY task — do not truncate or summarize. "
+        "Use markdown formatting (bullets, bold). Include dates when relevant.\n\n"
+        f"My tasks:\n{context}\n\n"
+        f"Question: {query}"
+    )
+    return connectLLM(answer_prompt)
+
+
+def route(line: str, store: TaskStore) -> str:
+    """Dispatch a line to the right handler. Returns a response string."""
+    line = line.strip()
+    if not line:
+        return ""
+    lower = line.lower()
+    if lower.startswith("todo:"):
+        return handle_todo(line[5:].strip(), store)
+    elif lower.startswith("done:"):
+        return handle_done(line[5:].strip(), store)
+    elif lower.startswith("q:"):
+        return handle_query(line[2:].strip(), store)
+    return handle_query(line, store)
+
+
+# ============================================================
+#  CLI entry point
+# ============================================================
+
+def main():
+    print("Personal Assistant — LM Studio + ChromaDB")
+    print("Prefixes:  todo: <task>   done: <task>   q: <question>   (no prefix → query)")
+    print("Type 'exit' to quit.\n")
+
+    store = TaskStore()
+
+    while True:
+        try:
+            line = input("> ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if line.strip().lower() in ("exit", "quit"):
+            break
+        try:
+            response = route(line, store)
+            if response:
+                print(response, "\n")
+        except Exception as e:
+            print(f"  ! error: {e}\n")
+
+
+if __name__ == "__main__":
+    main()
+
+--------------------------------
+
+flask:
+
+"""
+Flask web UI for the personal assistant.
+
+Run:
+    pip install flask
+    python flask_app.py
+
+Then open http://127.0.0.1:5000 in your browser.
+
+This file is purely presentation: every action delegates to
+personal_assistant.py. The core logic, connectLLM, connectEmbedLLM,
+and TaskStore are untouched.
+"""
+
+from flask import Flask, render_template, request, jsonify
+
+import personal_assistant as core
+
+
+app = Flask(__name__)
+
+# Single shared TaskStore for the lifetime of the process.
+# (Single-user app, single-process Flask dev server — safe.)
+store = core.TaskStore()
+
+
+# ============================================================
+#  Helpers
+# ============================================================
+
+def serialize_tasks(documents, metadatas, ids, sort_key):
+    """Sort tasks by date desc and return JSON-serializable list."""
+    items = sorted(
+        zip(documents, metadatas, ids),
+        key=lambda x: x[1].get(sort_key, "") or x[1].get("created_at", ""),
+        reverse=True,
+    )
+    return [
+        {
+            "id": _id,
+            "text": doc,
+            "status": meta.get("status", ""),
+            "created_at": meta.get("created_at", ""),
+            "completed_at": meta.get("completed_at", ""),
+            "due_at": meta.get("due_at", ""),
+            "topic":  meta.get("topic", ""),
+        }
+        for doc, meta, _id in items
+    ]
+
+
+def get_sidebar_state():
+    """Snapshot of pending + recently-completed tasks for the sidebar."""
+    pending = store.get_all(where={"status": "pending"})
+    completed = store.get_all(where={"status": "completed"})
+
+    pending_list = serialize_tasks(
+        pending["documents"], pending["metadatas"], pending["ids"],
+        sort_key="created_at",
+    )
+    completed_list = serialize_tasks(
+        completed["documents"], completed["metadatas"], completed["ids"],
+        sort_key="completed_at",
+    )[:10]
+
+    return {
+        "pending_count": len(pending["ids"]),
+        "completed_count": len(completed["ids"]),
+        "pending": pending_list,
+        "recent_completed": completed_list,
+    }
+
+
+# ============================================================
+#  Routes
+# ============================================================
+
+@app.route("/")
+def index():
+    return render_template("index.html", config={
+        "chat_model":  core.CHAT_MODEL,
+        "embed_model": core.EMBED_MODEL,
+        "server":      core.LM_STUDIO_BASE_URL,
+        "db_dir":      core.CHROMA_DIR,
+        "threshold":   core.DONE_MATCH_THRESHOLD,
+    })
+
+
+@app.route("/api/state")
+def api_state():
+    """Return current sidebar state (counts + lists)."""
+    return jsonify(get_sidebar_state())
+
+
+@app.route("/api/message", methods=["POST"])
+def api_message():
+    """Process a user message via the same router used by the CLI."""
+    data = request.get_json(force=True) or {}
+    line = (data.get("text") or "").strip()
+    if not line:
+        return jsonify({"response": "_(empty input)_", "state": get_sidebar_state()})
+
+    try:
+        response = core.route(line, store)
+    except Exception as e:
+        response = f"⚠ Error: `{e}`"
+
+    return jsonify({
+        "response": response or "_(empty input)_",
+        "state":    get_sidebar_state(),
+        "reminders": store.get_pending_reminders(),
+    })
+
+
+@app.route("/api/reminders")
+def api_reminders():
+    """Return all pending (unfired, not-yet-completed) reminders."""
+    return jsonify({"reminders": store.get_pending_reminders()})
+
+
+@app.route("/api/reminders/<task_id>/fired", methods=["POST"])
+def api_reminder_fired(task_id):
+    """Browser confirms a reminder has fired; mark it so it doesn't re-fire."""
+    ok = store.mark_reminder_fired(task_id)
+    return jsonify({"ok": ok})
+
+
+# ============================================================
+#  Entry point
+# ============================================================
+
+if __name__ == "__main__":
+    # 127.0.0.1 only — no LAN exposure.
+    # debug=False keeps the reloader from doubling up on the ChromaDB connection.
+    app.run(host="127.0.0.1", port=5000, debug=False)
+
+---------------------
+
+app js:
+// =============================================================
+//  Personal Assistant — Flask UI client logic
+// =============================================================
+
+// ---------- Tiny markdown renderer ----------
+// The backend returns markdown (bullets, **bold**, `code`, ~~strike~~, line breaks).
+// No external library — small inline implementation, escapes HTML first.
+
+function escapeHtml(s) {
+    return s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function renderMarkdown(md) {
+    let s = escapeHtml(md);
+
+    // Code blocks ```...```
+    s = s.replace(/```([\s\S]*?)```/g, (_, code) =>
+        `<pre><code>${code}</code></pre>`
+    );
+
+    // Inline `code`
+    s = s.replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`);
+
+    // Bold **text**
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+    // Italic *text* (after bold so we don't catch leftover stars)
+    s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+    // Strikethrough ~~text~~
+    s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+
+    // Bullet lists — group consecutive "- " lines
+    const lines = s.split("\n");
+    const out = [];
+    let inList = false;
+    for (const line of lines) {
+        const m = line.match(/^- (.*)$/);
+        if (m) {
+            if (!inList) { out.push("<ul>"); inList = true; }
+            out.push(`<li>${m[1]}</li>`);
+        } else {
+            if (inList) { out.push("</ul>"); inList = false; }
+            out.push(line);
+        }
+    }
+    if (inList) out.push("</ul>");
+    s = out.join("\n");
+
+    // Paragraphs from double newlines, single newlines as <br>
+    s = s
+        .split(/\n{2,}/)
+        .map(block => {
+            if (block.trim().startsWith("<")) return block;          // already HTML
+            return "<p>" + block.replace(/\n/g, "<br>") + "</p>";
+        })
+        .join("\n");
+
+    return s;
+}
+
+// ---------- DOM refs ----------
+const chatHistory   = document.getElementById("chat-history");
+const chatForm      = document.getElementById("chat-form");
+const chatInput     = document.getElementById("chat-input");
+const sendBtn       = document.getElementById("send-btn");
+const sidebar       = document.getElementById("sidebar");
+const sidebarToggle = document.getElementById("sidebar-toggle");
+const sidebarExpand = document.getElementById("sidebar-expand");
+const clearChatBtn  = document.getElementById("clear-chat");
+const pendingList   = document.getElementById("pending-list");
+const completedList = document.getElementById("completed-list");
+const metricPending = document.getElementById("metric-pending");
+const metricDone    = document.getElementById("metric-completed");
+
+// ---------- Chat rendering ----------
+function appendMessage(role, content) {
+    const msg = document.createElement("div");
+    msg.className = `message ${role}`;
+    msg.innerHTML = `
+        <div class="avatar">${role === "user" ? "·" : "◇"}</div>
+        <div class="bubble">${renderMarkdown(content)}</div>
+    `;
+    chatHistory.appendChild(msg);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+    return msg;
+}
+
+function appendTyping() {
+    const msg = document.createElement("div");
+    msg.className = "message assistant";
+    msg.id = "typing-indicator";
+    msg.innerHTML = `
+        <div class="avatar">◇</div>
+        <div class="bubble">
+            <div class="typing"><span></span><span></span><span></span></div>
+        </div>
+    `;
+    chatHistory.appendChild(msg);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+function removeTyping() {
+    const t = document.getElementById("typing-indicator");
+    if (t) t.remove();
+}
+
+// ---------- Sidebar rendering ----------
+function renderTaskList(container, tasks, done) {
+    if (!tasks || tasks.length === 0) {
+        container.innerHTML = `<div class="caption">// ${done ? "archive" : "queue"} empty</div>`;
+        return;
+    }
+    container.innerHTML = tasks.map(t => {
+        const dateField = done ? t.completed_at : t.created_at;
+        const date = (dateField || "").slice(0, 10);
+        const isReminder = !done && t.due_at;
+        const klass = done ? "task-entry done" : (isReminder ? "task-entry reminder" : "task-entry");
+
+        let meta;
+        if (isReminder) {
+            // Show due date prominently for reminders
+            const due = new Date(t.due_at);
+            const duePretty = due.toLocaleString(undefined, {
+                month: "short", day: "numeric",
+                hour: "2-digit", minute: "2-digit",
+            });
+            meta = `⏰ ${duePretty} · ${t.id.slice(0, 8)}`;
+        } else {
+            meta = `${date} · ${t.id.slice(0, 8)}`;
+        }
+
+        const icon = isReminder ? "⏰ " : "";
+        return `
+            <div class="${klass}">
+                <div class="task-text">${icon}${escapeHtml(t.text)}</div>
+                <div class="task-meta">${meta}</div>
+            </div>
+        `;
+    }).join("");
+}
+
+function applySidebarState(state) {
+    metricPending.textContent = state.pending_count;
+    metricDone.textContent    = state.completed_count;
+    renderTaskList(pendingList,   state.pending,          false);
+    renderTaskList(completedList, state.recent_completed, true);
+}
+
+async function refreshSidebar() {
+    try {
+        const r = await fetch("/api/state");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const state = await r.json();
+        applySidebarState(state);
+    } catch (e) {
+        console.error("sidebar refresh failed:", e);
+    }
+}
+
+// ---------- Send message ----------
+async function sendMessage(text) {
+    if (!text || !text.trim()) return;
+
+    appendMessage("user", text);
+    chatInput.value = "";
+    sendBtn.disabled = true;
+    appendTyping();
+
+    try {
+        const r = await fetch("/api/message", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ text }),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        removeTyping();
+        appendMessage("assistant", data.response);
+        if (data.state) applySidebarState(data.state);
+    } catch (e) {
+        removeTyping();
+        appendMessage("assistant", `⚠ Error: \`${e.message}\``);
+    } finally {
+        sendBtn.disabled = false;
+        chatInput.focus();
+    }
+}
+
+// ---------- Wire up events ----------
+chatForm.addEventListener("submit", e => {
+    e.preventDefault();
+    sendMessage(chatInput.value);
+});
+
+document.querySelectorAll(".quick-btn[data-q]").forEach(btn => {
+    btn.addEventListener("click", () => sendMessage(btn.dataset.q));
+});
+
+clearChatBtn.addEventListener("click", () => {
+    // Clear visible history but keep the welcome message
+    chatHistory.innerHTML = `
+        <div class="message assistant">
+            <div class="avatar">◇</div>
+            <div class="bubble">
+                Chat cleared. Continue with <code>todo: ...</code>,
+                <code>done: ...</code>, or any question.
+            </div>
+        </div>
+    `;
+});
+
+sidebarToggle.addEventListener("click", () => sidebar.classList.add("collapsed"));
+sidebarExpand.addEventListener("click", () => sidebar.classList.remove("collapsed"));
+
+// =============================================================
+//  Reminders — browser-side precise scheduling
+// =============================================================
+
+// Track scheduled timeouts so we can cancel/avoid double-scheduling.
+const scheduledReminders = new Map();   // task_id -> timeoutId
+
+// setTimeout's max delay is ~24.8 days (2^31 - 1 ms). For longer delays,
+// we chain: schedule a "wake" at the max, then re-schedule from there.
+const MAX_TIMEOUT_MS = 2147483647;
+
+async function requestNotificationPermission() {
+    if (!("Notification" in window)) {
+        console.warn("Browser does not support notifications.");
+        return "unsupported";
+    }
+    if (Notification.permission === "granted") return "granted";
+    if (Notification.permission === "denied")  return "denied";
+    try {
+        return await Notification.requestPermission();
+    } catch (e) {
+        console.warn("Notification permission request failed:", e);
+        return "denied";
+    }
+}
+
+function fireReminder(reminder) {
+    const title = `⏰ Reminder: ${reminder.topic}`;
+    const body  = `Due now — ${reminder.text}`;
+
+    // Browser notification (if permitted)
+    if (Notification.permission === "granted") {
+        try {
+            const n = new Notification(title, {
+                body,
+                tag: reminder.id,        // replaces any duplicate
+                requireInteraction: true // stays visible until dismissed
+            });
+            n.onclick = () => { window.focus(); n.close(); };
+        } catch (e) {
+            console.warn("Failed to show notification:", e);
+        }
+    }
+
+    // Always add to chat as a fallback / persistent record
+    appendMessage("assistant", `⏰ **Reminder:** ${reminder.topic}\n\n_Due now._`);
+
+    // Tell the server it fired so we don't re-fire on next page load
+    fetch(`/api/reminders/${reminder.id}/fired`, { method: "POST" })
+        .catch(e => console.warn("Failed to mark reminder fired:", e));
+
+    scheduledReminders.delete(reminder.id);
+}
+
+function scheduleReminder(reminder) {
+    // Skip if already scheduled (e.g. after a sidebar refresh)
+    if (scheduledReminders.has(reminder.id)) return;
+
+    const dueMs = new Date(reminder.due_at).getTime();
+    const nowMs = Date.now();
+    const deltaMs = dueMs - nowMs;
+
+    if (deltaMs <= 0) {
+        // Already past — fire immediately
+        fireReminder(reminder);
+        return;
+    }
+
+    if (deltaMs > MAX_TIMEOUT_MS) {
+        // Too far in the future for one setTimeout; chain.
+        const tid = setTimeout(() => {
+            scheduledReminders.delete(reminder.id);
+            scheduleReminder(reminder);
+        }, MAX_TIMEOUT_MS);
+        scheduledReminders.set(reminder.id, tid);
+        return;
+    }
+
+    const tid = setTimeout(() => fireReminder(reminder), deltaMs);
+    scheduledReminders.set(reminder.id, tid);
+}
+
+async function loadAndScheduleReminders(reminders) {
+    if (!reminders) {
+        try {
+            const r = await fetch("/api/reminders");
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            reminders = (await r.json()).reminders || [];
+        } catch (e) {
+            console.warn("Failed to load reminders:", e);
+            return;
+        }
+    }
+    reminders.forEach(scheduleReminder);
+}
+
+// Patch sendMessage's response handler so newly-created reminders are
+// scheduled the moment they're added (no waiting for next page load).
+// We hook into the existing /api/message response by re-fetching reminders
+// — simpler than threading state through sendMessage.
+const _originalSendMessage = sendMessage;
+window.sendMessage = async function(text) {
+    const result = await _originalSendMessage(text);
+    // After every message, the response may include new reminders.
+    // Reload from the dedicated endpoint to be safe.
+    loadAndScheduleReminders();
+    return result;
+};
+
+// ---------- Boot ----------
+refreshSidebar();
+requestNotificationPermission().then(perm => {
+    if (perm === "denied") {
+        appendMessage("assistant",
+            "⚠ Notification permission denied. Reminders will still appear here in chat, " +
+            "but you won't get browser popups. To enable: click the 🔒 icon in the address bar."
+        );
+    }
+    loadAndScheduleReminders();
+});
+
+--------------------
+
+style css:
+/* ===========================================================
+   Personal Assistant — Futuristic UI (Flask edition)
+   Dark glass · neon accents · monospace data · subtle glow
+   No external font dependencies — uses system stacks.
+   =========================================================== */
+
+:root {
+    --bg-deep:        #050810;
+    --bg-base:        #0a0e1a;
+    --bg-surface:     #0f1420;
+    --accent:         #00f0ff;
+    --accent-soft:    rgba(0, 240, 255, 0.15);
+    --accent-glow:    rgba(0, 240, 255, 0.35);
+    --magenta:        #b794f6;
+    --magenta-soft:   rgba(180, 148, 246, 0.15);
+    --text:           #e5e7eb;
+    --text-muted:     #6b7280;
+    --border-glow:    rgba(0, 240, 255, 0.2);
+    --success:        #4ade80;
+    --warning:        #fbbf24;
+
+    --font-sans:  -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-mono:  ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Monaco, Consolas, monospace;
+
+    --sidebar-w: 320px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    color: var(--text);
+    font-family: var(--font-sans);
+    background: var(--bg-base);
+}
+
+body {
+    background:
+        radial-gradient(ellipse 80% 60% at 20% 0%, rgba(0, 240, 255, 0.08) 0%, transparent 50%),
+        radial-gradient(ellipse 60% 80% at 80% 100%, rgba(180, 148, 246, 0.08) 0%, transparent 50%),
+        linear-gradient(180deg, var(--bg-base) 0%, var(--bg-deep) 100%);
+    background-attachment: fixed;
+    overflow: hidden;
+}
+
+/* Subtle grid overlay */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(0, 240, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 240, 255, 0.025) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+    z-index: 0;
+    -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+            mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+}
+
+/* ---------- Layout ---------- */
+.layout {
+    display: flex;
+    height: 100vh;
+    position: relative;
+    z-index: 1;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+    width: var(--sidebar-w);
+    flex: 0 0 var(--sidebar-w);
+    background: rgba(10, 14, 26, 0.7);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border-right: 1px solid var(--border-glow);
+    overflow-y: auto;
+    overflow-x: hidden;
+    transition: width 0.25s ease, flex-basis 0.25s ease;
+    position: relative;
+}
+
+.sidebar.collapsed {
+    width: 0;
+    flex-basis: 0;
+    border-right: none;
+}
+
+.sidebar.collapsed .sidebar-inner,
+.sidebar.collapsed .sidebar-toggle {
+    display: none;
+}
+
+.sidebar-inner {
+    padding: 1.25rem 1rem;
+}
+
+/* Collapse button inside the sidebar */
+.sidebar-toggle {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.5rem;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--border-glow);
+    background: rgba(15, 20, 32, 0.85);
+    color: var(--accent);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    line-height: 1;
+    transition: all 0.2s ease;
+    z-index: 2;
+}
+.sidebar-toggle:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* Expand button — only visible when sidebar is collapsed */
+.sidebar-expand {
+    position: fixed;
+    top: 1rem;
+    left: 0.75rem;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border-glow);
+    background: rgba(15, 20, 32, 0.85);
+    color: var(--accent);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 0 16px rgba(0, 240, 255, 0.15);
+    transition: all 0.25s ease;
+    display: none;
+    z-index: 10;
+}
+.sidebar-expand:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 24px var(--accent-glow);
+    transform: translateX(2px);
+}
+.sidebar.collapsed ~ .sidebar-expand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Sidebar typography */
+.sidebar h5 {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-muted);
+    margin: 1rem 0 0.5rem 0;
+}
+
+.sidebar hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, var(--border-glow) 50%, transparent 100%);
+    margin: 1.25rem 0;
+}
+
+/* App header */
+.app-header {
+    margin-bottom: 0.5rem;
+}
+.app-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--magenta) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.02em;
+}
+.app-subtitle {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    margin-top: -0.1rem;
+}
+
+/* Status pill */
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.7rem;
+    background: rgba(74, 222, 128, 0.08);
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    border-radius: 20px;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--success);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-top: 0.75rem;
+}
+.status-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--success);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--success);
+    animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--success); }
+    50%      { opacity: 0.5; box-shadow: 0 0 16px var(--success); }
+}
+
+/* Metrics */
+.metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+.metric {
+    background: linear-gradient(135deg,
+        rgba(0, 240, 255, 0.06) 0%,
+        rgba(180, 148, 246, 0.06) 100%);
+    border: 1px solid var(--border-glow);
+    border-radius: 12px;
+    padding: 0.75rem 0.85rem;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 0 24px rgba(0, 240, 255, 0.06), inset 0 1px 0 rgba(255,255,255,0.03);
+    transition: all 0.3s ease;
+}
+.metric:hover {
+    border-color: var(--accent-glow);
+    box-shadow: 0 0 32px rgba(0, 240, 255, 0.18), inset 0 1px 0 rgba(255,255,255,0.05);
+    transform: translateY(-1px);
+}
+.metric-label {
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.65rem;
+    font-family: var(--font-mono);
+}
+.metric-value {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 1.6rem;
+    text-shadow: 0 0 12px rgba(0, 240, 255, 0.4);
+    margin-top: 0.15rem;
+}
+
+/* Buttons */
+.quick-btn {
+    display: block;
+    width: 100%;
+    margin-bottom: 0.4rem;
+    padding: 0.5rem 0.85rem;
+    background: linear-gradient(135deg,
+        rgba(0, 240, 255, 0.08) 0%,
+        rgba(180, 148, 246, 0.08) 100%);
+    border: 1px solid var(--border-glow);
+    border-radius: 10px;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 0.85rem;
+    text-align: left;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: all 0.25s ease;
+}
+.quick-btn:hover {
+    border-color: var(--accent-glow);
+    background: linear-gradient(135deg,
+        rgba(0, 240, 255, 0.15) 0%,
+        rgba(180, 148, 246, 0.15) 100%);
+    box-shadow: 0 0 24px rgba(0, 240, 255, 0.25);
+    color: var(--accent);
+    transform: translateY(-1px);
+}
+.quick-btn:active { transform: translateY(0); }
+
+/* Task entries */
+.task-entry {
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.4rem;
+    background: rgba(15, 20, 32, 0.5);
+    border: 1px solid rgba(0, 240, 255, 0.08);
+    border-left: 2px solid var(--accent);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(8px);
+}
+.task-entry:hover {
+    border-color: var(--accent-glow);
+    background: rgba(15, 20, 32, 0.75);
+    transform: translateX(2px);
+}
+.task-entry.done {
+    border-left-color: var(--magenta);
+    opacity: 0.7;
+}
+.task-entry.done .task-text {
+    text-decoration: line-through;
+    color: var(--text-muted);
+}
+.task-entry.reminder {
+    border-left-color: var(--warning);
+    box-shadow: 0 0 16px rgba(251, 191, 36, 0.12);
+    background: linear-gradient(135deg,
+        rgba(251, 191, 36, 0.06) 0%,
+        rgba(15, 20, 32, 0.5) 60%);
+}
+.task-entry.reminder:hover {
+    border-color: rgba(251, 191, 36, 0.4);
+    box-shadow: 0 0 24px rgba(251, 191, 36, 0.25);
+}
+.task-entry.reminder .task-meta {
+    color: var(--warning);
+    opacity: 1;
+}
+.task-text { color: var(--text); line-height: 1.35; }
+.task-meta {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+}
+
+.caption {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    opacity: 0.85;
+}
+
+/* Config panel */
+details.config {
+    margin-top: 1rem;
+    background: rgba(15, 20, 32, 0.4);
+    border: 1px solid var(--border-glow);
+    border-radius: 10px;
+    backdrop-filter: blur(8px);
+    padding: 0.5rem 0.75rem;
+}
+details.config summary {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    list-style: none;
+}
+details.config summary::-webkit-details-marker { display: none; }
+details.config summary::before {
+    content: '▸';
+    margin-right: 0.5rem;
+    transition: transform 0.2s;
+    display: inline-block;
+}
+details.config[open] summary::before {
+    transform: rotate(90deg);
+}
+details.config pre {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text);
+    background: var(--bg-deep);
+    padding: 0.6rem 0.75rem;
+    border-radius: 6px;
+    margin: 0.5rem 0 0 0;
+    overflow-x: auto;
+}
+
+/* ---------- Chat panel ---------- */
+.chat-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 2rem 2rem 1rem 2rem;
+    max-width: 900px;
+    margin: 0 auto;
+    width: 100%;
+    overflow: hidden;
+}
+
+.chat-heading {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    margin-bottom: 1rem;
+}
+
+.chat-history {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.message {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    align-items: flex-start;
+}
+
+.avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+    margin-top: 0.25rem;
+}
+.message.assistant .avatar {
+    background: linear-gradient(135deg, var(--accent), var(--magenta));
+    box-shadow: 0 0 16px var(--accent-glow);
+    color: var(--bg-deep);
+    font-weight: 700;
+}
+.message.user .avatar {
+    background: rgba(180, 148, 246, 0.2);
+    border: 1px solid rgba(180, 148, 246, 0.4);
+    color: var(--magenta);
+    font-weight: 600;
+}
+
+.bubble {
+    background: rgba(15, 20, 32, 0.55);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 240, 255, 0.08);
+    border-radius: 16px;
+    padding: 0.85rem 1.15rem;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+    flex: 1;
+    line-height: 1.55;
+    font-size: 0.95rem;
+}
+.message.user .bubble {
+    background: linear-gradient(135deg,
+        rgba(180, 148, 246, 0.08) 0%,
+        rgba(180, 148, 246, 0.03) 100%);
+    border-color: rgba(180, 148, 246, 0.2);
+}
+
+.bubble code {
+    font-family: var(--font-mono);
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid var(--border-glow);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.82em;
+}
+.bubble pre {
+    background: var(--bg-deep);
+    padding: 0.6rem 0.75rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    border: 1px solid var(--border-glow);
+}
+.bubble ul, .bubble ol { padding-left: 1.4rem; margin: 0.4rem 0; }
+.bubble li { margin: 0.2rem 0; }
+.bubble p:first-child { margin-top: 0; }
+.bubble p:last-child  { margin-bottom: 0; }
+.bubble strong { color: var(--text); font-weight: 600; }
+.bubble em { color: var(--text-muted); }
+
+/* Typing indicator */
+.typing {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    height: 1.5em;
+}
+.typing span {
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    opacity: 0.4;
+    animation: typing 1.2s infinite;
+}
+.typing span:nth-child(2) { animation-delay: 0.15s; }
+.typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typing {
+    0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+    30%           { opacity: 1;   transform: translateY(-3px); }
+}
+
+/* ---------- Chat input ---------- */
+.chat-input-wrap {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+    background: rgba(15, 20, 32, 0.85);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-glow);
+    border-radius: 14px;
+    padding: 0.5rem;
+    box-shadow: 0 0 32px rgba(0, 240, 255, 0.08), 0 4px 16px rgba(0,0,0,0.3);
+    transition: all 0.3s ease;
+}
+.chat-input-wrap:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 40px rgba(0, 240, 255, 0.25), 0 4px 16px rgba(0,0,0,0.3);
+}
+
+#chat-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 0.95rem;
+    padding: 0.6rem 0.75rem;
+}
+#chat-input::placeholder {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+
+#send-btn {
+    background: var(--accent-soft);
+    border: 1px solid var(--border-glow);
+    color: var(--accent);
+    border-radius: 10px;
+    padding: 0 1rem;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: var(--font-mono);
+}
+#send-btn:hover {
+    background: var(--accent);
+    color: var(--bg-deep);
+    box-shadow: 0 0 20px var(--accent-glow);
+}
+#send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar         { width: 10px; height: 10px; }
+::-webkit-scrollbar-track   { background: var(--bg-deep); }
+::-webkit-scrollbar-thumb   {
+    background: linear-gradient(180deg, var(--accent), var(--magenta));
+    border-radius: 5px;
+    border: 2px solid var(--bg-deep);
+}
+::-webkit-scrollbar-thumb:hover { box-shadow: 0 0 12px var(--accent-glow); }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 768px) {
+    .sidebar {
+        position: absolute;
+        z-index: 5;
+        height: 100vh;
+        box-shadow: 4px 0 24px rgba(0,0,0,0.4);
+    }
+    .chat-panel { padding: 1.25rem; }
+}
