@@ -624,64 +624,183 @@ app js:
 //  Personal Assistant — Flask UI client logic
 // =============================================================
 
-// ---------- Tiny markdown renderer ----------
-// The backend returns markdown (bullets, **bold**, `code`, ~~strike~~, line breaks).
-// No external library — small inline implementation, escapes HTML first.
+// ---------- Tiny markdown renderer (regex-free) ----------
+// Backend returns markdown (bullets, **bold**, `code`, ~~strike~~, line breaks).
+// We convert to HTML using only string ops — no regex, no libraries.
+// Order matters: HTML-escape first so user content can never inject tags,
+// then code fences (so ** inside code stays literal), then inline code,
+// bold, italic, strike, then lists and paragraphs.
 
 function escapeHtml(s) {
-    return s
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+    // Character-by-character escape. No regex.
+    let out = "";
+    for (let i = 0; i < s.length; i++) {
+        const c = s.charAt(i);
+        if      (c === "&")  out += "&amp;";
+        else if (c === "<")  out += "&lt;";
+        else if (c === ">")  out += "&gt;";
+        else if (c === '"')  out += "&quot;";
+        else if (c === "'")  out += "&#039;";
+        else                 out += c;
+    }
+    return out;
 }
 
-function renderMarkdown(md) {
-    let s = escapeHtml(md);
+// Replace every occurrence of `delim`...`delim` with openTag/closeTag wrapping
+// the captured text. Non-greedy: pairs are matched left-to-right.
+// Used for inline code (`...`), bold (**...**), italic (*...*), strike (~~...~~).
+function wrapDelimited(input, delim, openTag, closeTag) {
+    const dlen = delim.length;
+    let out = "";
+    let i = 0;
+    while (i < input.length) {
+        const start = input.indexOf(delim, i);
+        if (start === -1) {                 // no more delimiters
+            out += input.slice(i);
+            break;
+        }
+        const inner = start + dlen;
+        const end = input.indexOf(delim, inner);
+        if (end === -1) {                   // unmatched opener — keep as literal
+            out += input.slice(i);
+            break;
+        }
+        if (end === inner) {                // empty content like `` — skip
+            out += input.slice(i, end + dlen);
+            i = end + dlen;
+            continue;
+        }
+        out += input.slice(i, start);       // text before the delimiter
+        out += openTag + input.slice(inner, end) + closeTag;
+        i = end + dlen;
+    }
+    return out;
+}
 
-    // Code blocks ```...```
-    s = s.replace(/```([\s\S]*?)```/g, (_, code) =>
-        `<pre><code>${code}</code></pre>`
-    );
+// Extract fenced code blocks (```...```) first, replacing each with a
+// placeholder. We re-insert the rendered <pre><code>...</code></pre> at the
+// very end so no later transformation touches their contents.
+function extractCodeBlocks(input) {
+    const FENCE = "```";
+    const blocks = [];
+    let out = "";
+    let i = 0;
+    while (i < input.length) {
+        const start = input.indexOf(FENCE, i);
+        if (start === -1) {
+            out += input.slice(i);
+            break;
+        }
+        const inner = start + FENCE.length;
+        const end = input.indexOf(FENCE, inner);
+        if (end === -1) {                   // unclosed fence — leave as-is
+            out += input.slice(i);
+            break;
+        }
+        out += input.slice(i, start);
+        const placeholder = "\u0000CODE_BLOCK_" + blocks.length + "\u0000";
+        blocks.push(input.slice(inner, end));
+        out += placeholder;
+        i = end + FENCE.length;
+    }
+    return { text: out, blocks };
+}
 
-    // Inline `code`
-    s = s.replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`);
+function reinsertCodeBlocks(input, blocks) {
+    let out = input;
+    for (let idx = 0; idx < blocks.length; idx++) {
+        const placeholder = "\u0000CODE_BLOCK_" + idx + "\u0000";
+        const at = out.indexOf(placeholder);
+        if (at === -1) continue;
+        out = out.slice(0, at)
+            + "<pre><code>" + blocks[idx] + "</code></pre>"
+            + out.slice(at + placeholder.length);
+    }
+    return out;
+}
 
-    // Bold **text**
-    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-
-    // Italic *text* (after bold so we don't catch leftover stars)
-    s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-
-    // Strikethrough ~~text~~
-    s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
-
-    // Bullet lists — group consecutive "- " lines
-    const lines = s.split("\n");
+// Group consecutive lines that start with "- " into a single <ul>...</ul>.
+function renderLists(input) {
+    const lines = input.split("\n");
     const out = [];
     let inList = false;
-    for (const line of lines) {
-        const m = line.match(/^- (.*)$/);
-        if (m) {
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const isBullet = line.length >= 2 && line.charAt(0) === "-" && line.charAt(1) === " ";
+        if (isBullet) {
             if (!inList) { out.push("<ul>"); inList = true; }
-            out.push(`<li>${m[1]}</li>`);
+            out.push("<li>" + line.slice(2) + "</li>");
         } else {
             if (inList) { out.push("</ul>"); inList = false; }
             out.push(line);
         }
     }
     if (inList) out.push("</ul>");
-    s = out.join("\n");
+    return out.join("\n");
+}
 
-    // Paragraphs from double newlines, single newlines as <br>
-    s = s
-        .split(/\n{2,}/)
-        .map(block => {
-            if (block.trim().startsWith("<")) return block;          // already HTML
-            return "<p>" + block.replace(/\n/g, "<br>") + "</p>";
-        })
-        .join("\n");
+// Split into paragraphs at runs of 2+ consecutive newlines; inside each
+// paragraph, single newlines become <br>. Blocks that already start with
+// an HTML tag are passed through untouched.
+function renderParagraphs(input) {
+    // Manual split on runs of "\n\n", "\n\n\n", etc.
+    const blocks = [];
+    let buf = "";
+    let i = 0;
+    while (i < input.length) {
+        if (input.charAt(i) === "\n" && input.charAt(i + 1) === "\n") {
+            blocks.push(buf);
+            buf = "";
+            i += 2;
+            while (i < input.length && input.charAt(i) === "\n") i++;   // consume extras
+        } else {
+            buf += input.charAt(i);
+            i++;
+        }
+    }
+    blocks.push(buf);
+
+    const out = [];
+    for (const block of blocks) {
+        if (block.length === 0) continue;
+        const trimmed = block.trim();
+        if (trimmed.length === 0) continue;
+        if (trimmed.charAt(0) === "<") {
+            // Already HTML (e.g. a <ul> from renderLists) — pass through.
+            out.push(block);
+        } else {
+            // Single newlines inside the paragraph → <br>
+            let paragraph = "";
+            for (let k = 0; k < block.length; k++) {
+                paragraph += (block.charAt(k) === "\n") ? "<br>" : block.charAt(k);
+            }
+            out.push("<p>" + paragraph + "</p>");
+        }
+    }
+    return out.join("\n");
+}
+
+function renderMarkdown(md) {
+    // 1. HTML-escape the whole input.
+    let s = escapeHtml(md);
+
+    // 2. Pull out code fences before anything else.
+    const { text, blocks } = extractCodeBlocks(s);
+    s = text;
+
+    // 3. Inline formatting. Order is significant: do longer delimiters
+    //    (**, ~~) before single-char ones (*).
+    s = wrapDelimited(s, "`",  "<code>",   "</code>");
+    s = wrapDelimited(s, "**", "<strong>", "</strong>");
+    s = wrapDelimited(s, "~~", "<del>",    "</del>");
+    s = wrapDelimited(s, "*",  "<em>",     "</em>");
+
+    // 4. Block-level: lists, then paragraphs.
+    s = renderLists(s);
+    s = renderParagraphs(s);
+
+    // 5. Re-insert code blocks last so nothing transformed them.
+    s = reinsertCodeBlocks(s, blocks);
 
     return s;
 }
@@ -960,7 +1079,6 @@ requestNotificationPermission().then(perm => {
     }
     loadAndScheduleReminders();
 });
-
 --------------------
 
 style css:
