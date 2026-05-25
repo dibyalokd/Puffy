@@ -1,0 +1,477 @@
+"""
+Personal Assistant — task tracker with RAG-backed query.
+Stack: LM Studio (chat + embeddings) + ChromaDB (persistent local store).
+
+Install:
+    pip install chromadb openai streamlit
+
+Setup (LM Studio):
+    1. Load a chat model (e.g. Qwen2.5-7B-Instruct)
+    2. Load an embedding model (e.g. nomic-embed-text-v1.5)
+    3. Start the local server on port 1234 with both models served
+    4. Update CHAT_MODEL and EMBED_MODEL below to match the model identifiers
+       shown in LM Studio (Developer tab → loaded models)
+
+Run:
+    python personal_assistant.py     # CLI mode
+    streamlit run app.py             # Web UI
+
+Public API:
+    connectLLM(prompt: str) -> str
+    connectEmbedLLM(text: str) -> list[float]
+"""
+
+import json
+import uuid
+from datetime import datetime
+
+import chromadb
+from chromadb import Documents, EmbeddingFunction, Embeddings
+from openai import OpenAI
+
+
+# ---------- Configuration ----------
+LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
+LM_STUDIO_API_KEY = "lm-studio"          # placeholder; LM Studio doesn't validate
+
+CHAT_MODEL  = "qwen2.5-7b-instruct"      # <-- replace with your loaded chat model id
+EMBED_MODEL = "nomic-embed-text-v1.5"    # <-- replace with your loaded embed model id
+
+CHROMA_DIR      = "./chroma_db"
+COLLECTION_NAME = "tasks"
+
+# Cosine distance below which we consider a "done:" line to refer to an existing todo.
+DONE_MATCH_THRESHOLD = 0.35
+
+# Default temperature for chat completions
+CHAT_TEMPERATURE = 0.2
+
+
+# ============================================================
+#  LLM connections — the ONLY place provider details live
+# ============================================================
+
+def connectLLM(prompt: str) -> str:
+    """Send a prompt string to the chat LLM and return the response text.
+
+    The prompt may contain system-level instructions, context, and the user's
+    question all together — caller is responsible for formatting. Internally
+    wrapped as a single user message.
+    """
+    client = OpenAI(base_url=LM_STUDIO_BASE_URL, api_key=LM_STUDIO_API_KEY)
+    resp = client.chat.completions.create(
+        model=CHAT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=CHAT_TEMPERATURE,
+    )
+    return resp.choices[0].message.content
+
+
+def connectEmbedLLM(text: str) -> list:
+    """Embed a single text string and return the vector (list of floats).
+
+    Defensively unwraps the response: some LM Studio + embedding-model combos
+    return [[floats]] instead of [floats] for resp.data[0].embedding. We
+    flatten until the first element is a number, so the caller always gets a
+    flat list[float].
+    """
+    client = OpenAI(base_url=LM_STUDIO_BASE_URL, api_key=LM_STUDIO_API_KEY)
+    resp = client.embeddings.create(model=EMBED_MODEL, input=[text])
+    vec = resp.data[0].embedding
+
+    # Flatten any extra nesting: [[floats]] -> [floats], [[[floats]]] -> [floats], etc.
+    while isinstance(vec, list) and len(vec) > 0 and isinstance(vec[0], list):
+        vec = vec[0]
+
+    return vec
+
+
+# ============================================================
+#  ChromaDB integration
+# ============================================================
+
+class LMStudioEmbeddingFunction(EmbeddingFunction[Documents]):
+    """Adapter so ChromaDB calls connectEmbedLLM once per text on add/query.
+
+    Note: the parameter MUST be named `input` and the signature must match
+    Chroma's EmbeddingFunction protocol exactly. Chroma introspects this
+    signature; a mismatch causes infinite recursion in some Chroma versions.
+    """
+
+    def __call__(self, input: Documents) -> Embeddings:
+        # ChromaDB hands us a list of strings — embed each individually.
+        return [connectEmbedLLM(text) for text in input]
+
+
+class TaskStore:
+    """Two retrieval modes:
+       - get_all(where=...)   — returns ALL matches, no K limit (for 'list' queries)
+       - semantic_search(...) — top-K by similarity (for fuzzy lookups)
+    """
+
+    def __init__(self, persist_dir=CHROMA_DIR, collection=COLLECTION_NAME):
+        self.client = chromadb.PersistentClient(path=persist_dir)
+        self.collection = self.client.get_or_create_collection(
+            name=collection,
+            embedding_function=LMStudioEmbeddingFunction(),
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    def add_task(self, text: str, status: str = "pending",
+                 due_at: str = "", topic: str = "") -> str:
+        task_id = str(uuid.uuid4())
+        now = datetime.now().isoformat(timespec="seconds")
+        self.collection.add(
+            ids=[task_id],
+            documents=[text],
+            metadatas=[{
+                "status": status,
+                "created_at": now,
+                "completed_at": now if status == "completed" else "",
+                # Reminder fields — empty strings when not a reminder.
+                # Chroma metadata doesn't support None, so "" = unset.
+                "due_at":   due_at,
+                "topic":    topic,
+                # reminder_fired: "yes" once the browser confirms it fired the
+                # notification, so we don't re-fire on page reload.
+                "reminder_fired": "",
+            }],
+        )
+        return task_id
+
+    def mark_reminder_fired(self, task_id: str) -> bool:
+        existing = self.collection.get(ids=[task_id])
+        if not existing["ids"]:
+            return False
+        meta = existing["metadatas"][0]
+        meta["reminder_fired"] = "yes"
+        self.collection.update(ids=[task_id], metadatas=[meta])
+        return True
+
+    def get_pending_reminders(self):
+        """Return all tasks that have a due_at set and haven't fired yet.
+
+        Filtered by status=pending so completed reminders don't re-fire.
+        """
+        result = self.collection.get(where={"status": "pending"})
+        out = []
+        for _id, doc, meta in zip(result["ids"], result["documents"], result["metadatas"]):
+            if meta.get("due_at") and not meta.get("reminder_fired"):
+                out.append({
+                    "id":     _id,
+                    "text":   doc,
+                    "due_at": meta["due_at"],
+                    "topic":  meta.get("topic", ""),
+                })
+        return out
+
+    def find_pending_match(self, text: str, n_results: int = 3):
+        try:
+            r = self.collection.query(
+                query_texts=[text], n_results=n_results,
+                where={"status": "pending"},
+            )
+        except Exception:
+            return None
+        if not r["ids"] or not r["ids"][0]:
+            return None
+        return {
+            "id":       r["ids"][0][0],
+            "document": r["documents"][0][0],
+            "distance": r["distances"][0][0],
+            "metadata": r["metadatas"][0][0],
+        }
+
+    def mark_completed(self, task_id: str) -> bool:
+        existing = self.collection.get(ids=[task_id])
+        if not existing["ids"]:
+            return False
+        meta = existing["metadatas"][0]
+        meta["status"] = "completed"
+        meta["completed_at"] = datetime.now().isoformat(timespec="seconds")
+        self.collection.update(ids=[task_id], metadatas=[meta])
+        return True
+
+    def get_all(self, where=None):
+        """Return ALL matching tasks — no top-K cap. Use for 'list' queries."""
+        return self.collection.get(where=where)
+
+    def semantic_search(self, query: str, where=None, n_results: int = 50):
+        return self.collection.query(
+            query_texts=[query], n_results=n_results, where=where,
+        )
+
+
+# ============================================================
+#  Handlers — return strings (UI-agnostic)
+# ============================================================
+
+_REMINDER_PARSE_TEMPLATE = """You parse reminder requests into JSON. Output ONLY JSON, no prose, no markdown fences.
+
+The current date and time is: {now}
+
+The user is creating a reminder. Extract two fields:
+- "due_at": ISO 8601 timestamp (YYYY-MM-DDTHH:MM:SS) for when the reminder should fire
+- "topic": short description of what the reminder is about
+
+Rules:
+- Resolve relative times against the current date/time given above.
+- "tomorrow" = next calendar day. "tonight" = today evening (~20:00 if unspecified).
+- If only a time is given (no date), assume the next occurrence of that time.
+- "6pm" = 18:00. "morning" = 09:00. "noon" = 12:00. "midnight" = 00:00 of next day.
+- Strip filler words like "remind me", "by", "regarding", "to", "about" from the topic.
+- If the input is ambiguous or no time can be parsed, return: {{"due_at": null, "topic": null}}
+
+Examples (assuming current time is 2026-05-25T14:00:00):
+"remind me by tomorrow 6pm regarding submit tax forms"
+-> {{"due_at": "2026-05-26T18:00:00", "topic": "submit tax forms"}}
+
+"remind me by 2026-06-01 09:30 to call dentist"
+-> {{"due_at": "2026-06-01T09:30:00", "topic": "call dentist"}}
+
+"remind me in 2 hours about the meeting"
+-> {{"due_at": "2026-05-25T16:00:00", "topic": "the meeting"}}
+
+"remind me friday morning regarding the report"
+-> {{"due_at": "2026-05-29T09:00:00", "topic": "the report"}}
+
+USER INPUT:
+{text}
+
+JSON:"""
+
+
+def parse_reminder(text: str) -> dict:
+    """Try to parse a reminder string into {due_at, topic}.
+
+    Returns {"due_at": iso_string, "topic": str} on success,
+    or {"due_at": None, "topic": None} on failure.
+    """
+    now_str = datetime.now().isoformat(timespec="seconds")
+    prompt = _REMINDER_PARSE_TEMPLATE.format(now=now_str, text=text)
+    raw = connectLLM(prompt).strip()
+
+    # Strip markdown fences if present
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+
+    try:
+        parsed = json.loads(raw)
+        return {
+            "due_at": parsed.get("due_at"),
+            "topic":  parsed.get("topic"),
+        }
+    except json.JSONDecodeError:
+        return {"due_at": None, "topic": None}
+
+
+def _looks_like_reminder(text: str) -> bool:
+    """Quick keyword check to decide whether to invoke the LLM parser.
+
+    Avoids an LLM call for every todo — only those that look like reminders.
+    """
+    t = text.lower()
+    return "remind" in t and any(k in t for k in (
+        "by ", "at ", "on ", "in ", "tomorrow", "tonight",
+        "today", "morning", "evening", "noon", "midnight",
+        "am", "pm", ":",
+    ))
+
+
+def handle_todo(text: str, store: TaskStore) -> str:
+    # If the todo looks like a reminder, try to parse it.
+    if _looks_like_reminder(text):
+        parsed = parse_reminder(text)
+        if parsed["due_at"] and parsed["topic"]:
+            # Validate the parsed timestamp is in the future
+            try:
+                due = datetime.fromisoformat(parsed["due_at"])
+                if due > datetime.now():
+                    task_id = store.add_task(
+                        text=parsed["topic"],
+                        status="pending",
+                        due_at=parsed["due_at"],
+                        topic=parsed["topic"],
+                    )
+                    due_pretty = due.strftime("%a %d %b %Y at %H:%M")
+                    return (
+                        f"⏰ Reminder set: **{parsed['topic']}**  \n"
+                        f"Will fire at **{due_pretty}**  \n"
+                        f"`{task_id[:8]}`"
+                    )
+                else:
+                    return (
+                        f"⚠ That time is already in the past ({parsed['due_at']}). "
+                        f"Try again with a future time."
+                    )
+            except (ValueError, TypeError):
+                # Fall through to plain todo if timestamp invalid
+                pass
+
+    # Plain todo path
+    task_id = store.add_task(text, "pending")
+    return f"📝 Logged as **pending**: {text}  \n`{task_id[:8]}`"
+
+
+def handle_done(text: str, store: TaskStore) -> str:
+    match = store.find_pending_match(text)
+    if match and match["distance"] < DONE_MATCH_THRESHOLD:
+        store.mark_completed(match["id"])
+        return (
+            f"✅ Marked complete: {match['document']}  \n"
+            f"`{match['id'][:8]}` · matched from \"{text}\" "
+            f"(distance {match['distance']:.3f})"
+        )
+    task_id = store.add_task(text, "completed")
+    if match:
+        return (
+            f"✅ Logged as completed: {text}  \n"
+            f"`{task_id[:8]}` · closest pending was \"{match['document']}\" "
+            f"(distance {match['distance']:.3f}, above threshold)"
+        )
+    return f"✅ Logged as completed: {text}  \n`{task_id[:8]}` (no prior todo)"
+
+
+# Single-string prompt template for the query planner.
+# System instructions and user query are folded together with clear delimiters.
+_PLANNER_PROMPT_TEMPLATE = """You convert user queries about their personal task list into JSON retrieval plans.
+Output ONLY JSON, no prose, no markdown fences.
+
+Schema:
+{{
+  "query_type": "list" | "search",
+  "status": "pending" | "completed" | null,
+  "semantic_query": string | null
+}}
+
+Rules:
+- "list" = return ALL matching tasks. Use for "what are my pending tasks", "show all completed", "list everything about X".
+- "search" = top semantically similar. Use for vague lookups like "did I have something about...", "anything on Y?".
+- status: filter by status, null if user didn't specify.
+- semantic_query: short phrase to embed for ranking/filtering by topic. null if no topic mentioned.
+
+Examples:
+"what are my pending tasks" -> {{"query_type":"list","status":"pending","semantic_query":null}}
+"show me everything I completed" -> {{"query_type":"list","status":"completed","semantic_query":null}}
+"all my pending work tasks" -> {{"query_type":"list","status":"pending","semantic_query":"work"}}
+"did I have something about taxes" -> {{"query_type":"search","status":null,"semantic_query":"taxes"}}
+"list all my tasks" -> {{"query_type":"list","status":null,"semantic_query":null}}
+
+USER QUERY:
+{query}
+
+JSON:"""
+
+
+def plan_query(query: str) -> dict:
+    """Convert a natural-language query into a structured retrieval plan."""
+    prompt = _PLANNER_PROMPT_TEMPLATE.format(query=query)
+    raw = connectLLM(prompt).strip()
+
+    # Strip markdown fences if model wrapped them
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+
+    try:
+        plan = json.loads(raw)
+        plan.setdefault("query_type", "list")
+        plan.setdefault("status", None)
+        plan.setdefault("semantic_query", None)
+        return plan
+    except json.JSONDecodeError:
+        return {"query_type": "list", "status": None, "semantic_query": None}
+
+
+def handle_query(query: str, store: TaskStore) -> str:
+    plan = plan_query(query)
+    where = {"status": plan["status"]} if plan.get("status") else None
+
+    if plan["query_type"] == "list":
+        # CRITICAL: get() returns EVERY matching row — no top-K cap.
+        result = store.get_all(where=where)
+        tasks = list(zip(result["ids"], result["documents"], result["metadatas"]))
+
+        if plan.get("semantic_query") and tasks:
+            sem = store.semantic_search(
+                plan["semantic_query"], where=where, n_results=len(tasks)
+            )
+            distances = dict(zip(sem["ids"][0], sem["distances"][0]))
+            tasks.sort(key=lambda t: distances.get(t[0], float("inf")))
+    else:
+        result = store.semantic_search(
+            plan["semantic_query"] or query, where=where, n_results=50
+        )
+        tasks = list(zip(result["ids"][0], result["documents"][0], result["metadatas"][0]))
+
+    if not tasks:
+        return "_No matching tasks found._"
+
+    # Format the task list as context for the answering LLM
+    lines = []
+    for _id, doc, meta in tasks:
+        status    = meta.get("status", "?")
+        created   = meta.get("created_at", "")[:16].replace("T", " ")
+        completed = meta.get("completed_at", "")
+        comp_str  = f", completed {completed[:16].replace('T', ' ')}" if completed else ""
+        lines.append(f"- [{status}] {doc} (created {created}{comp_str})")
+    context = "\n".join(lines)
+
+    answer_prompt = (
+        "You are a personal assistant answering questions about the user's tasks. "
+        "Use ONLY the task list provided. Be concise. "
+        "If the user asked for a list, present EVERY task — do not truncate or summarize. "
+        "Use markdown formatting (bullets, bold). Include dates when relevant.\n\n"
+        f"My tasks:\n{context}\n\n"
+        f"Question: {query}"
+    )
+    return connectLLM(answer_prompt)
+
+
+def route(line: str, store: TaskStore) -> str:
+    """Dispatch a line to the right handler. Returns a response string."""
+    line = line.strip()
+    if not line:
+        return ""
+    lower = line.lower()
+    if lower.startswith("todo:"):
+        return handle_todo(line[5:].strip(), store)
+    elif lower.startswith("done:"):
+        return handle_done(line[5:].strip(), store)
+    elif lower.startswith("q:"):
+        return handle_query(line[2:].strip(), store)
+    return handle_query(line, store)
+
+
+# ============================================================
+#  CLI entry point
+# ============================================================
+
+def main():
+    print("Personal Assistant — LM Studio + ChromaDB")
+    print("Prefixes:  todo: <task>   done: <task>   q: <question>   (no prefix → query)")
+    print("Type 'exit' to quit.\n")
+
+    store = TaskStore()
+
+    while True:
+        try:
+            line = input("> ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if line.strip().lower() in ("exit", "quit"):
+            break
+        try:
+            response = route(line, store)
+            if response:
+                print(response, "\n")
+        except Exception as e:
+            print(f"  ! error: {e}\n")
+
+
+if __name__ == "__main__":
+    main()
