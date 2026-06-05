@@ -1,0 +1,41 @@
+app:
+
+from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
+
+app = FastAPI(title="Greeter Service")
+
+
+@app.get("/", response_class=PlainTextResponse)
+def greet():
+    """Returns a plain 'hi' — test this with a GET from Postman."""
+    return "hi"
+
+
+@app.get("/health")
+def health():
+    """Simple health check, handy for monitoring / load balancers."""
+    return {"status": "ok"}
+
+---
+
+req:
+fastapi
+uvicorn[standard]
+gunicorn
+
+--
+sudo tee /etc/systemd/system/greeter.service > /dev/null << 'EOF'
+[Unit]
+Description=Greeter FastAPI service
+After=network.target
+
+[Service]
+User=youruser
+WorkingDirectory=/home/youruser/greeter
+ExecStart=/home/youruser/greeter/venv/bin/gunicorn app:app -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
