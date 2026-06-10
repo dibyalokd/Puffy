@@ -60,3 +60,61 @@ if __name__ == "__main__":
     }
   }
 }
+++++++++
+
+"""
+Minimal MCP server exposing a single tool: `say_hello`.
+
+Transport: Streamable HTTP (JSON-RPC over HTTP POST to a single endpoint,
+with optional SSE streaming on the same connection). This is Anthropic's
+modern remote transport.
+
+YOU run this server yourself — it's a standalone, long-running web service.
+Roo Code does NOT launch it; Roo Code only holds the URL and sends tool
+calls to it over HTTP.
+
+Run it:
+    pip install "mcp[cli]"
+    python server.py
+
+The MCP endpoint will be available at:
+    http://127.0.0.1:8000/mcp
+"""
+
+from mcp.server.fastmcp import FastMCP
+
+# host/port control where the HTTP service binds.
+# 127.0.0.1 = local only. Use 0.0.0.0 if you later want other machines to reach it.
+mcp = FastMCP("greeter", host="127.0.0.1", port=8000)
+
+
+@mcp.tool()
+def say_hello(name: str = "world") -> str:
+    """Send a greeting message.
+
+    Args:
+        name: Who to greet. Defaults to "world".
+
+    Returns:
+        A friendly greeting string.
+    """
+    return f"Hello, {name}! Greetings from your MCP server over HTTP."
+
+
+if __name__ == "__main__":
+    # streamable-http serves the MCP endpoint at /mcp on the host:port above.
+    mcp.run(transport="streamable-http")
+
+++++++
+
+{
+  "mcpServers": {
+    "greeter": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": {},
+      "alwaysAllow": [],
+      "disabled": false
+    }
+  }
+}
