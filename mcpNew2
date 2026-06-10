@@ -1,0 +1,48 @@
+"""
+Minimal MCP server exposing a single tool: `say_hello`.
+
+When the tool is called by an MCP client (e.g. Roo Code), it returns
+a greeting message. Communication happens over stdio, which is what
+Roo Code launches and talks to.
+
+Run locally to test:
+    pip install "mcp[cli]"
+    python server.py
+"""
+
+from mcp.server.fastmcp import FastMCP
+
+# The name shown to the MCP client.
+mcp = FastMCP("greeter")
+
+
+@mcp.tool()
+def say_hello(name: str = "world") -> str:
+    """Send a greeting message.
+
+    Args:
+        name: Who to greet. Defaults to "world".
+
+    Returns:
+        A friendly greeting string.
+    """
+    return f"Hello, {name}! 👋 Greetings from your MCP server."
+
+
+if __name__ == "__main__":
+    # stdio is the transport Roo Code uses for local servers.
+    mcp.run(transport="stdio")
+
+---------
+-------
+{
+  "mcpServers": {
+    "greeter": {
+      "command": "python",
+      "args": ["/ABSOLUTE/PATH/TO/server.py"],
+      "env": {},
+      "disabled": false,
+      "alwaysAllow": []
+    }
+  }
+}
