@@ -46,3 +46,17 @@ if __name__ == "__main__":
     }
   }
 }
+
+=========
+
+{
+  "mcpServers": {
+    "greeter": {
+      "command": "cmd",
+      "args": ["/c", "C:\\path\\to\\python.exe", "C:\\ABSOLUTE\\PATH\\TO\\server.py"],
+      "env": {},
+      "disabled": false,
+      "alwaysAllow": []
+    }
+  }
+}
